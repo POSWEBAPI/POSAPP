@@ -1,0 +1,14 @@
+{
+  "ApiMode": "normal",
+  "SkipLicenseInD365Mode": false,
+  "NormalApi": {
+    "BaseUrl": "https://localhost:7022"
+  },
+  "D365": {
+    "TenantId": "",
+    "ClientId": "",
+    "ClientSecret": "",
+    "D365BaseUrl": "",
+    "ODataVersion": "v9.2"
+  }
+}
