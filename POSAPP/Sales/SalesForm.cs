@@ -7835,7 +7835,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 ForeColor = TextMuted,
                 BackColor = Color.Transparent,
                 AutoSize = false,
-                Size = new Size(W, 16),
+                Size = new Size(W, 16), 
                 Location = new Point(0, y),
                 TextAlign = ContentAlignment.MiddleCenter
             });
