@@ -61,6 +61,12 @@ namespace POSAPP
         private decimal _splitCard = 0m;
         private string _activeSplit = "cash";
         private string _numpadBuffer = "";
+        private bool _isCreditSale = false;
+        private Panel _pnlSaleTypeToggle;
+        private Panel _btnNormalSaleToggle;
+        private Panel _btnCreditSaleToggle;
+        private Label _lblNormalSaleToggle;
+        private Label _lblCreditSaleToggle;
         private string _barcodeBuffer = "";
         private System.Windows.Forms.Timer _barcodeTimer;
         private bool _isSelecting = false;
@@ -532,7 +538,130 @@ namespace POSAPP
                 }
             }
 
-            _cmbTax.SelectedIndex = 0; // set after layout so the change handler fires cleanly
+            _cmbTax.SelectedIndex = 0;
+            BuildSaleTypeToggle(); // set after layout so the change handler fires cleanly
+        }
+
+        private void BuildSaleTypeToggle()
+        {
+            if (_pnlSaleTypeToggle != null) return; // already built
+            if (_cmbTax == null) return;
+
+            int top = _cmbTax.Bottom + 10;
+
+            _pnlSaleTypeToggle = new Panel
+            {
+                Size = new Size(panelDiscountCard.Width - 20, 36),
+                Location = new Point(10, top),
+                BackColor = Color.FromArgb(20, 22, 28),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+            };
+            _pnlSaleTypeToggle.Region = MakeRoundedRegion(_pnlSaleTypeToggle.Size, 9);
+
+            int halfW = _pnlSaleTypeToggle.Width / 2;
+
+            _btnNormalSaleToggle = new Panel
+            {
+                Size = new Size(halfW, 36),
+                Location = new Point(0, 0),
+                BackColor = AccGreen,
+                Cursor = Cursors.Hand
+            };
+            _lblNormalSaleToggle = new Label
+            {
+                Text = "💰  Payment",
+                Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
+                ForeColor = Color.White,
+                BackColor = Color.Transparent,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Cursor = Cursors.Hand
+            };
+            _btnNormalSaleToggle.Controls.Add(_lblNormalSaleToggle);
+
+            _btnCreditSaleToggle = new Panel
+            {
+                Size = new Size(_pnlSaleTypeToggle.Width - halfW, 36),
+                Location = new Point(halfW, 0),
+                BackColor = Color.FromArgb(20, 22, 28),
+                Cursor = Cursors.Hand,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+            };
+            _lblCreditSaleToggle = new Label
+            {
+                Text = "🧾  Credit Sale",
+                Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
+                ForeColor = TextMuted,
+                BackColor = Color.Transparent,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Cursor = Cursors.Hand
+            };
+            _btnCreditSaleToggle.Controls.Add(_lblCreditSaleToggle);
+
+            EventHandler selectNormal = (s, e) => SetCreditSaleMode(false);
+            EventHandler selectCredit = (s, e) => SetCreditSaleMode(true);
+
+            _btnNormalSaleToggle.Click += selectNormal;
+            _lblNormalSaleToggle.Click += selectNormal;
+            _btnCreditSaleToggle.Click += selectCredit;
+            _lblCreditSaleToggle.Click += selectCredit;
+
+            _pnlSaleTypeToggle.Controls.Add(_btnNormalSaleToggle);
+            _pnlSaleTypeToggle.Controls.Add(_btnCreditSaleToggle);
+            panelDiscountCard.Controls.Add(_pnlSaleTypeToggle);
+            _pnlSaleTypeToggle.BringToFront();
+
+            RefreshSaleTypeToggleVisual();
+
+            // Grow the panel to fit, push whatever sits below it down to match
+            int neededHeight = _pnlSaleTypeToggle.Bottom + 8;
+            int delta = neededHeight - panelDiscountCard.Height;
+            if (delta > 0)
+            {
+                panelDiscountCard.Height = neededHeight;
+                if (panelHotItems != null
+                    && panelHotItems.Parent == panelDiscountCard.Parent
+                    && panelHotItems.Top >= panelDiscountCard.Top)
+                {
+                    panelHotItems.Top += delta;
+                    panelHotItems.Height = Math.Max(60, panelHotItems.Height - delta);
+                }
+            }
+        }
+
+        private void RefreshSaleTypeToggleVisual()
+        {
+            if (_btnNormalSaleToggle == null || _btnCreditSaleToggle == null) return;
+
+            if (_isCreditSale)
+            {
+                _btnCreditSaleToggle.BackColor = AccPurple;
+                _lblCreditSaleToggle.ForeColor = Color.White;
+                _btnNormalSaleToggle.BackColor = Color.FromArgb(20, 22, 28);
+                _lblNormalSaleToggle.ForeColor = TextMuted;
+            }
+            else
+            {
+                _btnNormalSaleToggle.BackColor = AccGreen;
+                _lblNormalSaleToggle.ForeColor = Color.White;
+                _btnCreditSaleToggle.BackColor = Color.FromArgb(20, 22, 28);
+                _lblCreditSaleToggle.ForeColor = TextMuted;
+            }
+        }
+
+        private void SetCreditSaleMode(bool creditSale)
+        {
+            _isCreditSale = creditSale;
+            _splitCash = 0m; _splitUpi = 0m; _splitCard = 0m; _numpadBuffer = "";
+            _selectedBankAccount = null;
+
+            RefreshSaleTypeToggleVisual();
+            UpdateGrandTotalBigDisplay();
+
+            ShowStatus(_isCreditSale
+                ? "🧾 Credit Sale — Tender creates SO + Invoice only, no payment collected."
+                : "Normal sale — payment will be collected in a popup at Tender.", true);
         }
         private const string DEFAULT_CUSTOMER_CODE = "WALKIN";   // ← adjust to match your real default customer code
         private void EnsureOfflineSyncSchema()
@@ -3393,22 +3522,10 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 return;
             }
 
-            // Payment panel is always visible now — no separate Save/Pay steps.
-            if (lblSplitBalance != null)
-                lblSplitBalance.Visible = true;
-
             PositionFooterButtons();
 
-            // ── Tender button — always "Tender Sale", never "Save" ─────────────
-            if (btnTenderSale != null)
-            {
-                btnTenderSale.Visible = true;
-                btnTenderSale.Enabled = true;
-                btnTenderSale.Text = "✅  Tender Sale  (F1)";
-                btnTenderSale.BackColor = Color.FromArgb(34, 197, 94);
-            }
-
-            // ── Payment controls always shown — add items + pay on one screen ──
+            // Payment is now collected via a popup at Tender time — the legacy
+            // on-screen split/numpad controls stay hidden permanently.
             Control[] paymentControls = new Control[]
             {
         panelSplitCash, panelSplitUpi, panelSplitCard,
@@ -3416,7 +3533,9 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             };
 
             foreach (var ctrl in paymentControls)
-                if (ctrl != null) { ctrl.Visible = true; ctrl.Enabled = true; }
+                if (ctrl != null) { ctrl.Visible = false; ctrl.Enabled = false; }
+
+            if (_pnlSaleTypeToggle != null) _pnlSaleTypeToggle.Enabled = true;
 
             if (lblInvoiceNo.Text.StartsWith("QUO-"))
                 lblInvoiceNo.Text = SalesRepository.NextInvoiceNo();
@@ -7091,6 +7210,11 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 lblGrandTotalBig.Text = "P 0.00";
                 lblGrandTotalBig.ForeColor = Color.FromArgb(130, 140, 158); // muted grey
             }
+            else if (_isCreditSale)                                   // ← ADD HERE
+            {
+                lblGrandTotalBig.Text = "CREDIT: " + Fmt(grand);
+                lblGrandTotalBig.ForeColor = AccPurple;
+            }
             else if (remaining > 0.001m)
             {
                 lblGrandTotalBig.Text = "DUE: " + Fmt(remaining);
@@ -7165,39 +7289,6 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             bool inTextBox = txtSearch.Focused || txtCustomer.Focused || txtBarcode.Focused;
             if (!inTextBox)
             {
-                Keys k = keyData & ~Keys.Modifiers;
-
-                // Block all numpad / payment keys when in D365 mode
-                // (unless a pending invoice has been loaded for payment)
-                bool paymentAllowed = true;
-
-                if (k >= Keys.D0 && k <= Keys.D9)
-                {
-                    if (!paymentAllowed) { ShowStatus("D365 mode — payment disabled.", false); return true; }
-                    if (_cart.Count == 0) { ShowStatus("Add items to cart first.", false); return true; }
-                    NumpadPress(((int)(k - Keys.D0)).ToString()); return true;
-                }
-                if (k >= Keys.NumPad0 && k <= Keys.NumPad9)
-                {
-                    if (!paymentAllowed) { ShowStatus("D365 mode — payment disabled.", false); return true; }
-                    if (_cart.Count == 0) { ShowStatus("Add items to cart first.", false); return true; }
-                    NumpadPress(((int)(k - Keys.NumPad0)).ToString()); return true;
-                }
-                if (k == Keys.Decimal || k == Keys.OemPeriod)
-                {
-                    if (!paymentAllowed) { ShowStatus("D365 mode — payment disabled.", false); return true; }
-                    if (_cart.Count == 0) { ShowStatus("Add items to cart first.", false); return true; }
-                    NumpadPress("."); return true;
-                }
-                if (k == Keys.Back || k == Keys.Delete)
-                {
-                    if (!paymentAllowed) return true;
-                    NumpadPress("back"); return true;
-                }
-                if (keyData == Keys.F2) { if (paymentAllowed) SetActiveSplit("cash"); return true; }
-                if (keyData == Keys.F3) { if (paymentAllowed) panelSplitUpi_Click(null, null); return true; }
-                if (keyData == Keys.F4) { if (paymentAllowed) SetActiveSplit("card"); return true; }
-                if (keyData == Keys.F7) { if (paymentAllowed) btnSplitExact_Click(null, null); return true; }
                 if (keyData == Keys.F8) { OpenFloatManager(); return true; }
             }
             if (keyData == Keys.Escape) { this.Close(); return true; }
@@ -7677,6 +7768,492 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             ShowStatus($"✓ SO Invoice #{newInvoiceId} posted.", true);
             return (true, newInvoiceId);
         }
+        private async Task<bool> ShowPaymentCollectionDialogAsync(decimal grandTotal)
+        {
+            bool confirmed = false;
+            decimal localCash = 0m, localUpi = 0m, localCard = 0m;
+            string localActive = "cash";
+            SalesOrderApi.BankAccountDto localBankAccount = null;
+            if (_bankAccounts == null || _bankAccounts.Count == 0)
+                _bankAccounts = await SalesOrderApi.GetAllBanksAsync(_companyId).ConfigureAwait(true);
+
+            const int W = 420;
+            const int MARGIN = 24;
+            const int CONTENT_W = W - MARGIN * 2;
+
+            var dlg = new Form
+            {
+                FormBorderStyle = FormBorderStyle.None,
+                StartPosition = FormStartPosition.CenterParent,
+                BackColor = Color.FromArgb(22, 26, 36),
+                KeyPreview = true,
+                ShowInTaskbar = false
+            };
+
+            // ── Header ───────────────────────────────────────────────────────────
+            var pnlHead = new Panel { BackColor = Color.FromArgb(38, 42, 54), Size = new Size(W, 56), Location = Point.Empty };
+            pnlHead.Controls.Add(new Label
+            {
+                Text = "Collect Payment",
+                Font = new Font("Segoe UI", 12F, FontStyle.Bold),
+                ForeColor = TextWhite,
+                BackColor = Color.Transparent,
+                AutoSize = false,
+                Size = new Size(320, 56),
+                Location = new Point(MARGIN, 0),
+                TextAlign = ContentAlignment.MiddleLeft
+            });
+            var btnX = new Button
+            {
+                Text = "✕",
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+                ForeColor = TextMuted,
+                BackColor = Color.Transparent,
+                FlatStyle = FlatStyle.Flat,
+                Size = new Size(44, 56),
+                Location = new Point(W - 44, 0),
+                Cursor = Cursors.Hand
+            };
+            btnX.FlatAppearance.BorderSize = 0;
+            btnX.FlatAppearance.MouseOverBackColor = Color.FromArgb(55, 60, 78);
+            btnX.Click += (s, ev) => dlg.Close();
+            pnlHead.Controls.Add(btnX);
+            dlg.Controls.Add(pnlHead);
+
+            var headerRule = new Panel { BackColor = Color.FromArgb(50, 55, 70), Size = new Size(W, 1), Location = new Point(0, 56) };
+            dlg.Controls.Add(headerRule);
+
+            // ── Sequential layout cursor ─────────────────────────────────────────
+            int y = 57;
+
+            // ── Amount due ───────────────────────────────────────────────────────
+            y += 20;
+            dlg.Controls.Add(new Label
+            {
+                Text = "AMOUNT DUE",
+                Font = new Font("Segoe UI", 7.5F, FontStyle.Bold),
+                ForeColor = TextMuted,
+                BackColor = Color.Transparent,
+                AutoSize = false,
+                Size = new Size(W, 16),
+                Location = new Point(0, y),
+                TextAlign = ContentAlignment.MiddleCenter
+            });
+            y += 20;
+
+            var lblGrandDue = new Label
+            {
+                Text = Fmt(grandTotal),
+                Font = new Font("Segoe UI", 26F, FontStyle.Bold),
+                ForeColor = AccGreen,
+                BackColor = Color.Transparent,
+                AutoSize = false,
+                Size = new Size(W, 56),          // increased from 48 → no more cropping
+                Location = new Point(0, y),
+                TextAlign = ContentAlignment.MiddleCenter
+            };
+            dlg.Controls.Add(lblGrandDue);
+            y = lblGrandDue.Bottom + 20;
+
+            // ── Method tiles ─────────────────────────────────────────────────────
+            const int TILE_H = 68;
+            const int TILE_GAP = 12;
+            int tileW = (CONTENT_W - TILE_GAP * 2) / 3;
+            int tileY = y;
+
+            Panel MakeTile(string icon, string label, Color accent, int x)
+            {
+                var t = new Panel
+                {
+                    Size = new Size(tileW, TILE_H),
+                    Location = new Point(x, tileY),
+                    BackColor = Color.FromArgb(32, 36, 48),
+                    Cursor = Cursors.Hand
+                };
+                t.Region = MakeRoundedRegion(t.Size, 10);
+
+                var lblIcon = new Label
+                {
+                    Text = icon,
+                    Font = new Font("Segoe UI Emoji", 15F),
+                    ForeColor = accent,
+                    BackColor = Color.Transparent,
+                    Size = new Size(tileW, 34),
+                    Location = new Point(0, 8),
+                    TextAlign = ContentAlignment.MiddleCenter
+                };
+                var lblLbl = new Label
+                {
+                    Text = label,
+                    Font = new Font("Segoe UI", 8F, FontStyle.Bold),
+                    ForeColor = TextMuted,
+                    BackColor = Color.Transparent,
+                    Size = new Size(tileW, 20),
+                    Location = new Point(0, 42),
+                    TextAlign = ContentAlignment.MiddleCenter
+                };
+                t.Controls.Add(lblIcon);
+                t.Controls.Add(lblLbl);
+                t.Tag = new object[] { lblIcon, lblLbl, accent };
+                return t;
+            }
+
+            var tileCash = MakeTile("💵", "CASH", AccGreen, MARGIN);
+            var tileUpi = MakeTile("🏦", "BANK", AccBlue, MARGIN + tileW + TILE_GAP);
+            var tileCard = MakeTile("💳", "CARD", AccPurple, MARGIN + (tileW + TILE_GAP) * 2);
+            dlg.Controls.AddRange(new Control[] { tileCash, tileUpi, tileCard });
+            y = tileY + TILE_H + 20;
+
+            // ── Bank account (reserved fixed slot) ───────────────────────────────
+            int bankBlockTop = y;
+            var lblBankCaption = new Label
+            {
+                Text = "Bank Account",
+                Font = new Font("Segoe UI", 8F, FontStyle.Bold),
+                ForeColor = TextMuted,
+                BackColor = Color.Transparent,
+                AutoSize = false,
+                Size = new Size(CONTENT_W, 16),
+                Location = new Point(MARGIN, bankBlockTop),
+                Visible = false
+            };
+            var cmbBank = new ComboBox
+            {
+                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
+                ForeColor = TextWhite,
+                BackColor = Color.FromArgb(38, 42, 54),
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                FlatStyle = FlatStyle.Flat,
+                Size = new Size(CONTENT_W, 32),
+                Location = new Point(MARGIN, bankBlockTop + 18),
+                Visible = false
+            };
+            foreach (var b in _bankAccounts) cmbBank.Items.Add(b.BankName);
+            cmbBank.SelectedIndexChanged += (s, ev) =>
+            {
+                if (cmbBank.SelectedIndex >= 0 && cmbBank.SelectedIndex < _bankAccounts.Count)
+                    localBankAccount = _bankAccounts[cmbBank.SelectedIndex];
+            };
+            dlg.Controls.Add(lblBankCaption);
+            dlg.Controls.Add(cmbBank);
+
+            const int BANK_BLOCK_H = 58;
+            y = bankBlockTop + BANK_BLOCK_H;
+
+            // ── Amount input ─────────────────────────────────────────────────────
+            // ── Amount input ─────────────────────────────────────────────────────
+            var lblAmountCaption = new Label
+            {
+                Text = "Amount",
+                Font = new Font("Segoe UI", 8F, FontStyle.Bold),
+                ForeColor = TextMuted,
+                BackColor = Color.Transparent,
+                AutoSize = false,
+                Size = new Size(CONTENT_W, 16),
+                Location = new Point(MARGIN, y)
+            };
+            dlg.Controls.Add(lblAmountCaption);
+            y += 18;
+
+            var amountWrap = new Panel
+            {
+                Size = new Size(CONTENT_W, 46),
+                Location = new Point(MARGIN, y),
+                BackColor = Color.Transparent
+            };
+            // NO Region – we paint everything ourselves
+
+            var lblCurrency = new Label
+            {
+                Text = _currencySymbol,
+                Font = new Font("Segoe UI", 14F, FontStyle.Bold),
+                ForeColor = TextMuted,
+                BackColor = Color.Transparent,
+                Size = new Size(36, 46),
+                Location = new Point(10, 0),          // inset from left edge
+                TextAlign = ContentAlignment.MiddleCenter
+            };
+
+            var txtAmount = new TextBox
+            {
+                Font = new Font("Consolas", 17F, FontStyle.Bold),
+                ForeColor = AccGreen,
+                BackColor = Color.FromArgb(30, 34, 46),
+                BorderStyle = BorderStyle.None,
+                Size = new Size(CONTENT_W - 62, 34),  // leave room for border + currency
+                Location = new Point(48, 6),          // inset from left + top
+                TextAlign = System.Windows.Forms.HorizontalAlignment.Right
+            };
+
+            amountWrap.Controls.Add(lblCurrency);
+            amountWrap.Controls.Add(txtAmount);
+
+           // Color amountBorderColor = AccGreen;
+
+            amountWrap.Paint += (s, pe) =>
+            {
+                pe.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                pe.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+
+                var rect = new Rectangle(1, 1, amountWrap.Width - 3, amountWrap.Height - 3);
+
+                // 1. Fill rounded background
+                using (var bgPath = RoundedPath(rect, 8))
+                using (var bgBrush = new SolidBrush(Color.FromArgb(30, 34, 46)))
+                    pe.Graphics.FillPath(bgBrush, bgPath);
+
+                // 2. Draw accent border (thicker when focused)
+               // float borderWidth = txtAmount.Focused ? 2.5f : 1.8f;
+               //// using var pen = new Pen(txtAmount.Focused ? amountBorderColor : Color.FromArgb(55, 60, 76), borderWidth);
+               // using var borderPath = RoundedPath(rect, 8);
+               // pe.Graphics.DrawPath(pen, borderPath);
+            };
+
+            txtAmount.Enter += (s, e) => amountWrap.Invalidate();
+            txtAmount.Leave += (s, e) => amountWrap.Invalidate();
+
+            dlg.Controls.Add(amountWrap);
+            y = amountWrap.Bottom + 16;
+
+            // ── Fill Exact Remaining ─────────────────────────────────────────────
+            var btnExact = new Panel
+            {
+                Size = new Size(CONTENT_W, 34),
+                Location = new Point(MARGIN, y),
+                BackColor = Color.FromArgb(28, 31, 41),
+                Cursor = Cursors.Hand
+            };
+            btnExact.Region = MakeRoundedRegion(btnExact.Size, 8);
+            btnExact.Paint += (s, pe) =>
+            {
+                pe.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                using var pen = new Pen(Color.FromArgb(62, 68, 86), 1f);
+                using var path = RoundedPath(new Rectangle(0, 0, btnExact.Width - 1, btnExact.Height - 1), 8);
+                pe.Graphics.DrawPath(pen, path);
+            };
+            var lblExact = new Label
+            {
+                Text = "Fill Exact Remaining",
+                Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
+                ForeColor = TextMuted,
+                BackColor = Color.Transparent,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Cursor = Cursors.Hand
+            };
+            btnExact.Controls.Add(lblExact);
+            btnExact.MouseEnter += (s, e) => { btnExact.BackColor = Color.FromArgb(36, 40, 52); };
+            btnExact.MouseLeave += (s, e) => { btnExact.BackColor = Color.FromArgb(28, 31, 41); };
+            dlg.Controls.Add(btnExact);
+            y = btnExact.Bottom + 16;
+
+            // ── Balance pill ─────────────────────────────────────────────────────
+            var lblBalance = new Label
+            {
+                Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+                BackColor = Color.FromArgb(40, 34, 20),
+                AutoSize = false,
+                Size = new Size(CONTENT_W, 34),
+                Location = new Point(MARGIN, y),
+                TextAlign = ContentAlignment.MiddleCenter
+            };
+            lblBalance.Region = MakeRoundedRegion(lblBalance.Size, 8);
+            dlg.Controls.Add(lblBalance);
+            y = lblBalance.Bottom + 18;
+
+            // ── Confirm ──────────────────────────────────────────────────────────
+            var btnConfirm = new Button
+            {
+                Text = "Confirm Payment",
+                Font = new Font("Segoe UI", 10.5F, FontStyle.Bold),
+                ForeColor = Color.White,
+                BackColor = AccGreen,
+                FlatStyle = FlatStyle.Flat,
+                Size = new Size(CONTENT_W, 46),
+                Location = new Point(MARGIN, y),
+                Cursor = Cursors.Hand,
+                Enabled = false
+            };
+            btnConfirm.FlatAppearance.BorderSize = 0;
+            btnConfirm.FlatAppearance.MouseOverBackColor = ControlPaint.Dark(AccGreen, 0.08f);
+            btnConfirm.Region = MakeRoundedRegion(btnConfirm.Size, 10);
+            dlg.Controls.Add(btnConfirm);
+            y = btnConfirm.Bottom;
+
+            dlg.ClientSize = new Size(W, y + MARGIN);
+            dlg.Region = MakeRoundedRegion(dlg.ClientSize, 16);
+
+            // ── Local logic ──────────────────────────────────────────────────────
+            bool _suppressTextChanged = false;
+
+            void RefreshTileVisuals()
+            {
+                foreach (var t in new[] { tileCash, tileUpi, tileCard })
+                {
+                    var arr = (object[])t.Tag;
+                    var lblIcon = (Label)arr[0];
+                    var lblLbl = (Label)arr[1];
+                    var accent = (Color)arr[2];
+                    bool active = (t == tileCash && localActive == "cash")
+                               || (t == tileUpi && localActive == "upi")
+                               || (t == tileCard && localActive == "card");
+                    t.BackColor = active ? accent : Color.FromArgb(32, 36, 48);
+                    lblIcon.ForeColor = active ? Color.White : accent;
+                    lblLbl.ForeColor = active ? Color.White : TextMuted;
+                }
+
+                bool isBank = localActive == "upi";
+                lblBankCaption.Visible = isBank;
+                cmbBank.Visible = isBank;
+
+                //amountBorderColor = localActive == "cash" ? AccGreen
+                //                  : localActive == "upi" ? AccBlue
+                //                  : AccPurple;
+                //txtAmount.ForeColor = amountBorderColor;
+                amountWrap.Invalidate();
+            }
+
+            void LoadAmountIntoTextbox()
+            {
+                decimal shown = localActive == "cash" ? localCash
+                              : localActive == "upi" ? localUpi
+                              : localCard;
+                _suppressTextChanged = true;
+                txtAmount.Text = shown > 0 ? shown.ToString("F2") : "";
+                _suppressTextChanged = false;
+            }
+
+            void RefreshBalance()
+            {
+                decimal total = localCash + localUpi + localCard;
+                decimal remaining = grandTotal - total;
+
+                if (remaining > 0.001m)
+                {
+                    lblBalance.Text = $"Remaining {Fmt(remaining)}";
+                    lblBalance.ForeColor = AccOrange;
+                    lblBalance.BackColor = Color.FromArgb(50, 38, 18);
+                    btnConfirm.Enabled = false;
+                }
+                else if (remaining < -0.001m)
+                {
+                    lblBalance.Text = $"Change {Fmt(-remaining)}";
+                    lblBalance.ForeColor = AccGreen;
+                    lblBalance.BackColor = Color.FromArgb(18, 55, 35);
+                    btnConfirm.Enabled = true;
+                }
+                else
+                {
+                    lblBalance.Text = "✓ Fully Paid";
+                    lblBalance.ForeColor = AccGreen;
+                    lblBalance.BackColor = Color.FromArgb(18, 55, 35);
+                    btnConfirm.Enabled = true;
+                }
+            }
+
+            void SelectMethod(string method)
+            {
+                localActive = method;
+                RefreshTileVisuals();
+                LoadAmountIntoTextbox();
+                txtAmount.Focus();
+                txtAmount.SelectAll();
+            }
+
+            void CommitTypedAmount()
+            {
+                decimal.TryParse(txtAmount.Text, out decimal typed);
+                if (typed < 0) typed = 0;
+                if (localActive == "cash") localCash = typed;
+                else if (localActive == "upi") localUpi = typed;
+                else localCard = typed;
+                RefreshBalance();
+            }
+
+            EventHandler tileCashClick = (s, e) => SelectMethod("cash");
+            EventHandler tileUpiClick = (s, e) => SelectMethod("upi");
+            EventHandler tileCardClick = (s, e) => SelectMethod("card");
+
+            foreach (Control c in tileCash.Controls) c.Click += tileCashClick;
+            tileCash.Click += tileCashClick;
+            foreach (Control c in tileUpi.Controls) c.Click += tileUpiClick;
+            tileUpi.Click += tileUpiClick;
+            foreach (Control c in tileCard.Controls) c.Click += tileCardClick;
+            tileCard.Click += tileCardClick;
+
+            txtAmount.KeyPress += (s, e) =>
+            {
+                if (char.IsControl(e.KeyChar)) return;
+                if (char.IsDigit(e.KeyChar)) return;
+                if (e.KeyChar == '.' && !txtAmount.Text.Contains(".")) return;
+                e.Handled = true;
+            };
+
+            txtAmount.TextChanged += (s, e) =>
+            {
+                if (_suppressTextChanged) return;
+                CommitTypedAmount();
+            };
+
+            EventHandler exactClick = (s, e) =>
+            {
+                decimal others = localActive == "cash" ? localUpi + localCard
+                                : localActive == "upi" ? localCash + localCard
+                                : localCash + localUpi;
+                decimal fill = Math.Max(0m, grandTotal - others);
+                _suppressTextChanged = true;
+                txtAmount.Text = fill.ToString("F2");
+                _suppressTextChanged = false;
+                CommitTypedAmount();
+            };
+            btnExact.Click += exactClick;
+            lblExact.Click += exactClick;
+
+            btnConfirm.Click += (s, e) =>
+            {
+                if (localUpi > 0 && localBankAccount == null && _bankAccounts.Count > 0)
+                {
+                    ShowStatus("⛔ Please select a bank account for the Bank Transfer amount.", false);
+                    cmbBank.Focus();
+                    return;
+                }
+                confirmed = true;
+                dlg.Close();
+            };
+
+            dlg.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Escape)
+                {
+                    e.Handled = true;
+                    dlg.Close();
+                }
+            };
+
+            txtAmount.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Enter)
+                {
+                    e.Handled = true;
+                    if (btnConfirm.Enabled) btnConfirm.PerformClick();
+                }
+            };
+
+            SelectMethod("cash");
+            RefreshBalance();
+            dlg.Shown += (s, e) => txtAmount.Focus();
+            dlg.ShowDialog(this);
+
+            if (confirmed)
+            {
+                _splitCash = localCash;
+                _splitUpi = localUpi;
+                _splitCard = localCard;
+                _selectedBankAccount = localBankAccount;
+                _selectedUpiMethodName = localBankAccount?.BankName ?? "Bank Transfer";
+            }
+            return confirmed;
+        }
         private async void btnTenderSale_Click(object sender, EventArgs e)
         {
             if (_cart.Count == 0) { ShowStatus("Cart is empty.", false); return; }
@@ -7720,32 +8297,35 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 }
 
                 // ── NEW: bank account must be selected if a bank-transfer amount was entered ──
-                if (_splitUpi > 0 && _selectedBankAccount == null)
-                {
-                    ShowStatus("⛔ Please select a bank account for the Bank Transfer amount.", false);
-                    panelSplitUpi_Click(null, null);
-                    return;
-                }
-
-                // ── Payment flow — single screen: add items, pay, print ───────────────────
                 decimal grandTotal = GrandTotal();
-                decimal splitSum = _splitCash + _splitUpi + _splitCard;
 
-                if (splitSum < grandTotal)
+                if (_isCreditSale)
                 {
-                    ShowStatus($"Insufficient. Need {Fmt(grandTotal - splitSum)} more.", false);
-                    return;
+                    // Credit sale — no payment popup, no shift/cash checks.
+                    _splitCash = 0m; _splitUpi = 0m; _splitCard = 0m;
+                    _selectedBankAccount = null;
+                }
+                else
+                {
+                    // Collect payment via the modern popup instead of the old on-screen numpad.
+                    bool paymentOk = await ShowPaymentCollectionDialogAsync(grandTotal).ConfigureAwait(true);
+                    if (!paymentOk)
+                    {
+                        ShowStatus("Payment cancelled.", false);
+                        return;
+                    }
+
+                    if (_splitCash > 0 && !ShiftState.IsOpen)
+                    {
+                        MessageBox.Show(
+                            "No shift is open.\n\nOpen a shift via Float Entry (F8) before processing cash.",
+                            "⚠ No Shift Open", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
                 }
 
-                if (_splitCash > 0 && !ShiftState.IsOpen)
-                {
-                    MessageBox.Show(
-                        "No shift is open.\n\nOpen a shift via Float Entry (F8) before processing cash.",
-                        "⚠ No Shift Open", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
-
-                decimal change = splitSum - grandTotal;
+                decimal splitSum = _isCreditSale ? 0m : _splitCash + _splitUpi + _splitCard;
+                decimal change = _isCreditSale ? 0m : splitSum - grandTotal;
 
                 var receiptData = PrepareReceiptData();
                 receiptData.IsQuotation = false;
@@ -7848,7 +8428,9 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                     }
 
                     // ── UPDATED: handle Cash and/or Bank Transfer, bind real BankAccountID ──
-                    if (invoiced && (_splitCash > 0 || _splitUpi > 0))
+                    // ── UPDATED: handle Cash and/or Bank Transfer, bind real BankAccountID ──
+                    // Credit sales never post a Customer Payment — invoice stays outstanding on account.
+                    if (!_isCreditSale && invoiced && (_splitCash > 0 || _splitUpi > 0))
                     {
                         int? bankAccountId = _splitUpi > 0 ? _selectedBankAccount?.BankAccountID : (int?)null;
 
@@ -8387,6 +8969,8 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             _splitCash = 0m; _splitUpi = 0m; _splitCard = 0m; _numpadBuffer = "";
             _selectedUpiMethodName = "Bank Transfer";
             _selectedBankAccount = null;
+            _isCreditSale = false;
+            RefreshSaleTypeToggleVisual();
             // in ResetSale(), near where _selectedUpiMethodName / _cardRefNumber are reset:
             if (!string.IsNullOrWhiteSpace(lblInvoiceNo.Text))
                 PendingSalesOrderCache.Cache.Remove(lblInvoiceNo.Text);
