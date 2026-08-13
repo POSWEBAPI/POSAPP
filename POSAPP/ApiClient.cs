@@ -19,8 +19,6 @@ namespace POSAPP.Invoice
                 req.Headers.Authorization =
                     new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", AuthToken);
         }
-        // ADD near the top of the file, alongside InvoiceWithLines
-       
 
         public static async Task<JsonElement> GetJsonAsync(string path)
         {
@@ -47,6 +45,7 @@ namespace POSAPP.Invoice
             using var doc = JsonDocument.Parse(json);
             return doc.RootElement.Clone();
         }
+
         public static async Task<T> GetAsync<T>(string path)
         {
             using var req = new HttpRequestMessage(HttpMethod.Get, AppConfig.BaseUrl + path);
@@ -57,6 +56,7 @@ namespace POSAPP.Invoice
             var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
             return JsonSerializer.Deserialize<T>(json, opts);
         }
+
         public static JsonElement UnwrapArray(JsonElement root)
         {
             if (root.ValueKind == JsonValueKind.Array) return root;
@@ -68,8 +68,14 @@ namespace POSAPP.Invoice
             return root;
         }
 
+        // ── THE ACTUAL FIX LIVES HERE — these are the ONLY Str/Int/Dec/DateVal
+        // in the project. Every call site (including GetInvoicesForCustomerAsync)
+        // calls "ApiClient.Str(...)" etc., so this is the copy that matters.
+        // Do NOT duplicate these into SalesReturnRepository — a duplicate there
+        // is dead code, since nothing calls it unqualified. ────────────────────
         public static string Str(JsonElement el, params string[] names)
         {
+            if (el.ValueKind != JsonValueKind.Object) return "";
             foreach (var n in names)
                 if (el.TryGetProperty(n, out var v) && v.ValueKind != JsonValueKind.Null)
                     return v.ValueKind == JsonValueKind.String ? v.GetString() : v.ToString();
@@ -78,17 +84,24 @@ namespace POSAPP.Invoice
 
         public static int Int(JsonElement el, params string[] names)
         {
+            if (el.ValueKind != JsonValueKind.Object) return 0;
             foreach (var n in names)
                 if (el.TryGetProperty(n, out var v) && v.ValueKind != JsonValueKind.Null)
                 {
-                    if (v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out int i)) return i;
+                    if (v.ValueKind == JsonValueKind.Number)
+                    {
+                        if (v.TryGetInt32(out int i)) return i;
+                        if (v.TryGetDecimal(out decimal d)) return (int)Math.Round(d); // handles "3.00", "100.00"
+                    }
                     if (int.TryParse(v.ToString(), out int p)) return p;
+                    if (decimal.TryParse(v.ToString(), out decimal p2)) return (int)Math.Round(p2);
                 }
             return 0;
         }
 
         public static decimal Dec(JsonElement el, params string[] names)
         {
+            if (el.ValueKind != JsonValueKind.Object) return 0m;
             foreach (var n in names)
                 if (el.TryGetProperty(n, out var v) && v.ValueKind != JsonValueKind.Null)
                 {
@@ -100,6 +113,7 @@ namespace POSAPP.Invoice
 
         public static DateTime DateVal(JsonElement el, params string[] names)
         {
+            if (el.ValueKind != JsonValueKind.Object) return DateTime.Now;
             foreach (var n in names)
                 if (el.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.String)
                     if (DateTime.TryParse(v.GetString(), out var dt)) return dt;
@@ -107,9 +121,6 @@ namespace POSAPP.Invoice
         }
     }
 
-    // ── ADDED BACK — this was missing, which is why the build broke.
-    // GetInvoicesForCustomerAsync below returns List<InvoiceWithLines>,
-    // so this type has to exist somewhere in the project. ──────────────
     public class InvoiceWithLines
     {
         public InvoiceLite Header { get; set; }
@@ -118,8 +129,6 @@ namespace POSAPP.Invoice
 
     public static partial class SalesReturnRepository
     {
-        // ── Pass query = "" to get every customer (used by the dropdown
-        // that loads the full list on form open). ──────────────────────
         public static async Task<List<CustomerLite>> SearchCustomersAsync(string query, int companyId)
         {
             var list = new List<CustomerLite>();
@@ -149,15 +158,44 @@ namespace POSAPP.Invoice
             return list;
         }
 
+        // ── GetInvoicesForCustomerAsync: fault-isolated per invoice, plus a
+        // raw-count log so you can tell, from the Output window, whether the
+        // JSON payload itself only has 4 elements (server/paging issue) or
+        // really has 6 with some failing to parse (client issue). ─────────
         public static async Task<List<InvoiceWithLines>> GetInvoicesForCustomerAsync(int customerId)
         {
             var list = new List<InvoiceWithLines>();
+            JsonElement root;
+            string rawJson;
+
             try
             {
-                var root = ApiClient.UnwrapArray(
-                    await ApiClient.GetJsonAsync($"/api/SOInvoice/Getinvoice?customerid={customerId}"));
+                var fetched = await ApiClient.GetJsonAsync($"/api/SOInvoice/Getinvoice?customerid={customerId}");
+                rawJson = fetched.GetRawText();
+                root = ApiClient.UnwrapArray(fetched);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("GetInvoicesForCustomerAsync FETCH ERROR: " + ex.Message);
+                return list;
+            }
 
-                foreach (var inv in root.EnumerateArray())
+            if (root.ValueKind != JsonValueKind.Array)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"GetInvoicesForCustomerAsync: expected array, got {root.ValueKind} for customer {customerId}. Raw: {rawJson}");
+                return list;
+            }
+
+            int rawCount = root.GetArrayLength();
+            System.Diagnostics.Debug.WriteLine(
+                $"GetInvoicesForCustomerAsync: customer {customerId} — RAW JSON array length = {rawCount}");
+
+            int index = 0;
+            foreach (var inv in root.EnumerateArray())
+            {
+                index++;
+                try
                 {
                     var header = inv.TryGetProperty("header", out var h) ? h
                                : inv.TryGetProperty("Header", out var h2) ? h2
@@ -167,14 +205,17 @@ namespace POSAPP.Invoice
                     DateTime invDate = ApiClient.DateVal(header, "invoiceDate", "InvoiceDate");
 
                     JsonElement linesEl = default;
-                    bool hasLines = inv.TryGetProperty("lines", out linesEl) ||
-                                     inv.TryGetProperty("Lines", out linesEl);
+                    bool hasLines = inv.ValueKind == JsonValueKind.Object &&
+                                    (inv.TryGetProperty("lines", out linesEl) ||
+                                     inv.TryGetProperty("Lines", out linesEl));
 
                     var lines = new List<OriginalInvoiceLine>();
                     if (hasLines && linesEl.ValueKind == JsonValueKind.Array)
                     {
                         foreach (var ln in linesEl.EnumerateArray())
                         {
+                            if (ln.ValueKind != JsonValueKind.Object) continue;
+
                             lines.Add(new OriginalInvoiceLine
                             {
                                 ItemName = ApiClient.Str(ln, "itemName", "ItemName", "itemSearch", "ItemSearch"),
@@ -204,13 +245,18 @@ namespace POSAPP.Invoice
                         Lines = lines
                     });
                 }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"GetInvoicesForCustomerAsync: FAILED to parse invoice #{index} for customer {customerId}: {ex.Message}\nRaw item: {inv.GetRawText()}");
+                }
+            }
 
-                list.Sort((a, b) => b.Header.InvoiceDate.CompareTo(a.Header.InvoiceDate));
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine("GetInvoicesForCustomerAsync ERROR: " + ex.Message);
-            }
+            list.Sort((a, b) => b.Header.InvoiceDate.CompareTo(a.Header.InvoiceDate));
+
+            System.Diagnostics.Debug.WriteLine(
+                $"GetInvoicesForCustomerAsync: customer {customerId} — parsed {list.Count} of {rawCount} raw invoice(s).");
+
             return list;
         }
     }
