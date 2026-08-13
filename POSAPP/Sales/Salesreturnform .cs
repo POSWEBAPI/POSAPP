@@ -144,6 +144,11 @@ namespace POSAPP.Sales
         private Panel pnlReturnBuilderView;
         private Label lblNoSelection;
 
+        // Sticky footer (Process Return / Cancel) — lives OUTSIDE the scrollable
+        // pnlDetailBody, docked to the bottom of pnlRightDetail, so the action
+        // buttons are always reachable regardless of scroll position or window size.
+        private Panel pnlBuilderFooter;
+
         // Return-builder inner controls
         private Label lblReturnBuilderInvoice;
         private Panel pnlInvoiceLinesHeader, panelInvoiceLineRows;
@@ -268,7 +273,7 @@ namespace POSAPP.Sales
             ClientSize = new Size(1180, 780);
             KeyPreview = true;
             Text = "Sales Return";
-            MinimumSize = new Size(900, 560);
+            MinimumSize = new Size(940, 620);
             SetStyle(ControlStyles.AllPaintingInWmPaint |
                      ControlStyles.UserPaint |
                      ControlStyles.DoubleBuffer |
@@ -359,8 +364,19 @@ namespace POSAPP.Sales
             };
             Controls.Add(pnlLeftList);
 
-            // Header block now hosts: caption, text search, and a customer filter dropdown.
-            var pnlListHeader = new Panel { Dock = DockStyle.Top, Height = 118, BackColor = PanelWhite, Padding = new Padding(16, 14, 16, 10) };
+            // Header block hosts: caption + refresh (row 1), text search (row 2),
+            // and a customer filter dropdown (row 3). Height is generous and every
+            // row is on its own non-overlapping band so nothing can collide, and a
+            // bottom divider line makes the boundary with the order list explicit —
+            // the order list can never render "under" the filter controls.
+            const int LIST_HEADER_H = 136;
+            var pnlListHeader = new Panel { Dock = DockStyle.Top, Height = LIST_HEADER_H, BackColor = PanelWhite };
+            pnlListHeader.Paint += (s, e) =>
+            {
+                using var pen = new Pen(BorderColor, 1f);
+                e.Graphics.DrawLine(pen, 0, LIST_HEADER_H - 1, pnlListHeader.Width, LIST_HEADER_H - 1);
+            };
+
             var lblOrdersCap = new Label
             {
                 Text = "All Sales Orders",
@@ -368,15 +384,18 @@ namespace POSAPP.Sales
                 ForeColor = TextDark,
                 BackColor = PanelWhite,
                 AutoSize = true,
-                Location = new Point(16, 8)
+                Location = new Point(16, 12)
             };
+
+          
+
             txtOrderSearch = new TextBox
             {
                 Font = new Font("Segoe UI", 9.5F),
                 ForeColor = TextDark,
                 BackColor = InputBg,
                 BorderStyle = BorderStyle.FixedSingle,
-                Location = new Point(16, 38),
+                Location = new Point(16, 46),
                 Size = new Size(pnlLeftList.Width - 32, 28),
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
@@ -391,7 +410,7 @@ namespace POSAPP.Sales
                 BackColor = InputBg,
                 FlatStyle = FlatStyle.Flat,
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Location = new Point(16, 74),
+                Location = new Point(16, 84),
                 Size = new Size(pnlLeftList.Width - 32, 26),
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
@@ -399,14 +418,26 @@ namespace POSAPP.Sales
             cmbCustomerFilter.SelectedIndex = 0;
             cmbCustomerFilter.SelectedIndexChanged += (s, e) => ApplyOrderFilters();
 
+            // Position the refresh button once we know the caption's width so the
+            // two never sit on top of each other even with long localized captions.
+           
+
             pnlListHeader.Controls.Add(lblOrdersCap);
+          
             pnlListHeader.Controls.Add(txtOrderSearch);
-            pnlListHeader.Controls.Add(cmbCustomerFilter);
-            pnlLeftList.Controls.Add(pnlListHeader);
+            pnlListHeader.Controls.Add(cmbCustomerFilter); 
+
+            // Auto-refresh whenever the window regains focus, so stale data doesn't linger.
+            this.Activated += async (s, e) => await LoadAllOrdersAsync();
 
             pnlOrderRowsScroll = new Panel { Dock = DockStyle.Fill, BackColor = PanelWhite, AutoScroll = true };
+
+            // IMPORTANT: add the Top-docked header BEFORE the Fill-docked scroll
+            // area. Docking is resolved in the order controls are added, so the
+            // header must reserve its band first — otherwise the list can be laid
+            // out starting at y = 0 and render underneath/behind the filter row.
+            pnlLeftList.Controls.Add(pnlListHeader);
             pnlLeftList.Controls.Add(pnlOrderRowsScroll);
-            pnlListHeader.BringToFront();
 
             pnlOrderRows = new Panel { BackColor = PanelWhite, AutoSize = true, Location = new Point(0, 0), Width = pnlLeftList.Width - 20 };
             pnlOrderRowsScroll.Controls.Add(pnlOrderRows);
@@ -426,25 +457,6 @@ namespace POSAPP.Sales
                 Location = new Point(16, 8)
             };
             pnlOrderRows.Controls.Add(lblOrdersEmpty);
-            // In BuildTitleBar() or BuildLeftList(), add a refresh button near the search box:
-            var btnRefresh = new Button
-            {
-                Text = "⟳ Refresh",
-                Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
-                ForeColor = TextMid,
-                BackColor = InputBg,
-                FlatStyle = FlatStyle.Flat,
-                AutoSize = true,
-                Padding = new Padding(8, 3, 8, 3),
-                Location = new Point(16, 8),
-                Cursor = Cursors.Hand
-            };
-            btnRefresh.FlatAppearance.BorderSize = 0;
-            btnRefresh.Click += async (s, e) => await LoadAllOrdersAsync();
-            pnlListHeader.Controls.Add(btnRefresh);
-
-            // Also auto-refresh whenever the window regains focus, so you don't have to remember to click it:
-            this.Activated += async (s, e) => await LoadAllOrdersAsync();
         }
 
         private static void AddPlaceholder(TextBox tb, string placeholder)
@@ -669,6 +681,7 @@ namespace POSAPP.Sales
             pnlRightDetail.BringToFront();
 
             BuildDetailToolbar();
+            BuildBuilderFooter();
             BuildDetailBodyHost();
 
             lblNoSelection = new Label
@@ -724,6 +737,95 @@ namespace POSAPP.Sales
             pnlDetailToolbar.SizeChanged += (s, e) => LayoutToolbarButtons();
             pnlRightDetail.Controls.Add(pnlDetailToolbar);
         }
+
+        // Sticky footer, always docked to the bottom of the detail panel. Hidden
+        // while browsing order details; shown only while the return builder is
+        // active, so Process Return / Cancel are always on-screen and reachable
+        // no matter how tall the scrollable content above them is, or how small
+        // the window/screen is.
+        private void BuildBuilderFooter()
+        {
+            pnlBuilderFooter = new Panel { Dock = DockStyle.Bottom, Height = 64, BackColor = PanelWhite, Visible = false };
+            pnlBuilderFooter.Paint += (s, e) =>
+            {
+                using var pen = new Pen(BorderColor, 1f);
+                e.Graphics.DrawLine(pen, 0, 0, pnlBuilderFooter.Width, 0);
+            };
+
+            lblBuilderStatus = new Label
+            {
+                Text = "",
+                Font = new Font("Segoe UI", 8.5F),
+                ForeColor = TextMid,
+                BackColor = PanelWhite,
+                AutoSize = false,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Bottom,
+                Location = new Point(24, 8),
+                Size = new Size(400, 20),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            lblRefundTotalFooter = new Label
+            {
+                Text = "",
+                Font = new Font("Segoe UI", 8.5F),
+                ForeColor = TextMid,
+                BackColor = PanelWhite,
+                AutoSize = false,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Bottom,
+                Location = new Point(24, 30),
+                Size = new Size(400, 20),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            _detailFooterStatusLine1 = lblBuilderStatus;
+            _detailFooterStatusLine2 = lblRefundTotalFooter;
+
+            btnCancelReturn = new Button
+            {
+                Text = "Cancel",
+                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
+                ForeColor = TextMid,
+                BackColor = Color.FromArgb(34, 38, 34),
+                FlatStyle = FlatStyle.Flat,
+                Size = new Size(90, 36),
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                Cursor = Cursors.Hand
+            };
+            btnCancelReturn.FlatAppearance.BorderSize = 0;
+            btnCancelReturn.Region = MakeRoundedRegion(btnCancelReturn.Size, 6);
+            btnCancelReturn.Click += (s, e) => BackToOrderDetail();
+
+            btnProcessReturn = new Button
+            {
+                Text = "Process Return",
+                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
+                ForeColor = Color.Black,
+                BackColor = AccGreen,
+                FlatStyle = FlatStyle.Flat,
+                Size = new Size(160, 36),
+                Enabled = false,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                Cursor = Cursors.Hand
+            };
+            btnProcessReturn.FlatAppearance.BorderSize = 0;
+            btnProcessReturn.Region = MakeRoundedRegion(btnProcessReturn.Size, 6);
+            btnProcessReturn.Click += BtnProcessReturn_Click;
+
+            void LayoutFooterButtons()
+            {
+                int midY = (pnlBuilderFooter.Height - 36) / 2;
+                btnProcessReturn.Location = new Point(pnlBuilderFooter.Width - 24 - btnProcessReturn.Width, midY);
+                btnCancelReturn.Location = new Point(btnProcessReturn.Left - 10 - btnCancelReturn.Width, midY);
+                int labelW = Math.Max(80, btnCancelReturn.Left - 24 - 24);
+                lblBuilderStatus.Width = labelW;
+                lblRefundTotalFooter.Width = labelW;
+            }
+            pnlBuilderFooter.SizeChanged += (s, e) => LayoutFooterButtons();
+            LayoutFooterButtons();
+
+            pnlBuilderFooter.Controls.AddRange(new Control[] { lblBuilderStatus, lblRefundTotalFooter, btnCancelReturn, btnProcessReturn });
+            pnlRightDetail.Controls.Add(pnlBuilderFooter);
+        }
+        private Label _detailFooterStatusLine1, _detailFooterStatusLine2;
 
         private void LayoutToolbarButtons()
         {
@@ -877,16 +979,34 @@ namespace POSAPP.Sales
         //   2) the two cards reflow correctly at any window / screen resolution,
         //   3) the whole card + its children are repainted after every text
         //      change (fixes the "ghost text" overlap seen when switching
-        //      between orders with different-length order numbers).
+        //      between orders with different-length order numbers),
+        //   4) on narrow windows the right (address) card drops BELOW the left
+        //      card instead of being squeezed into negative/near-zero width,
+        //      which is what was causing the order-detail area to look cropped.
         private void RelayoutOrderDetailCards()
         {
             if (_leftDetailCard == null || _rightDetailCard == null) return;
 
-            int bodyW = Math.Max(760, pnlOrderDetailView.Width);
-            int margin = 28;   // was 24 — a bit more clearance below the toolbar's bottom border
+            int bodyW = Math.Max(1, pnlOrderDetailView.Width);
+            int margin = 24;
             int gap = 20;
-            int rightW = Math.Max(260, (int)(bodyW * 0.24));
-            int leftW = Math.Max(480, bodyW - margin * 2 - gap - rightW);
+
+            const int STACK_BREAKPOINT = 760;
+            bool stacked = bodyW < STACK_BREAKPOINT;
+
+            int leftW, rightW;
+            if (stacked)
+            {
+                // Narrow window: both cards take the full available width, stacked
+                // vertically, so nothing gets clipped on the side.
+                leftW = Math.Max(260, bodyW - margin * 2);
+                rightW = leftW;
+            }
+            else
+            {
+                rightW = Math.Max(260, (int)(bodyW * 0.24));
+                leftW = Math.Max(480, bodyW - margin * 2 - gap - rightW);
+            }
 
             _leftDetailCard.Location = new Point(margin, margin);
             _leftDetailCard.Width = leftW;
@@ -897,7 +1017,10 @@ namespace POSAPP.Sales
             lblShippingHeading.Location = new Point(0, lblBillingName.Bottom + addrGap);
             lblShippingName.Location = new Point(0, lblShippingHeading.Bottom + 6);
 
-            _rightDetailCard.Location = new Point(_leftDetailCard.Right + gap, margin);
+            if (stacked)
+                _rightDetailCard.Location = new Point(margin, _leftDetailCard.Bottom + gap);
+            else
+                _rightDetailCard.Location = new Point(_leftDetailCard.Right + gap, margin);
             _rightDetailCard.Width = rightW;
             _rightDetailCard.Height = lblShippingName.Bottom + 20;
 
@@ -1034,6 +1157,7 @@ namespace POSAPP.Sales
             //    leak into the paint and caused the right card to overlap the toolbar.
             lblNoSelection.Visible = false;
             pnlDetailToolbar.Visible = true;
+            pnlBuilderFooter.Visible = false;      // no footer while just viewing order details
             pnlDetailBody.Visible = true;
             pnlOrderDetailView.Visible = true;
             pnlReturnBuilderView.Visible = false;
@@ -1061,7 +1185,7 @@ namespace POSAPP.Sales
         // ══════════════════════════════════════════════════════════════════
         //  RETURN BUILDER VIEW
         // ══════════════════════════════════════════════════════════════════
-        private Panel _linesCard, _cartCard, _detailsCard, _footerBar;
+        private Panel _linesCard, _cartCard, _detailsCard;
 
         private void BuildReturnBuilderView()
         {
@@ -1194,67 +1318,6 @@ namespace POSAPP.Sales
             detailsCard.Tag = 400;
             pnlReturnBuilderView.Controls.Add(detailsCard);
 
-            // Footer action bar (within builder view)
-            var footerBar = MakeDetailCard(new Point(24, 0), 900);
-            _footerBar = footerBar;
-            footerBar.Height = 60;
-            lblBuilderStatus = new Label
-            {
-                Text = "",
-                Font = new Font("Segoe UI", 8.5F),
-                ForeColor = TextMid,
-                BackColor = PanelWhite,
-                AutoSize = false,
-                Size = new Size(500, 30),
-                Location = new Point(0, 10),
-                TextAlign = ContentAlignment.MiddleLeft
-            };
-            lblRefundTotalFooter = new Label
-            {
-                Text = "",
-                Font = new Font("Segoe UI", 11F, FontStyle.Bold),
-                ForeColor = AccGreen,
-                BackColor = PanelWhite,
-                AutoSize = true,
-                Location = new Point(500, 14)
-            };
-            btnCancelReturn = new Button
-            {
-                Text = "Cancel",
-                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
-                ForeColor = TextMid,
-                BackColor = Color.FromArgb(34, 38, 34),
-                FlatStyle = FlatStyle.Flat,
-                Size = new Size(90, 36),
-                Cursor = Cursors.Hand
-            };
-            btnCancelReturn.FlatAppearance.BorderSize = 0;
-            btnCancelReturn.Region = MakeRoundedRegion(btnCancelReturn.Size, 6);
-            btnCancelReturn.Click += (s, e) => BackToOrderDetail();
-
-            btnProcessReturn = new Button
-            {
-                Text = "Process Return",
-                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
-                ForeColor = Color.Black,
-                BackColor = AccGreen,
-                FlatStyle = FlatStyle.Flat,
-                Size = new Size(160, 36),
-                Enabled = false,
-                Cursor = Cursors.Hand
-            };
-            btnProcessReturn.FlatAppearance.BorderSize = 0;
-            btnProcessReturn.Region = MakeRoundedRegion(btnProcessReturn.Size, 6);
-            btnProcessReturn.Click += BtnProcessReturn_Click;
-
-            footerBar.SizeChanged += (s, e) =>
-            {
-                btnProcessReturn.Location = new Point(footerBar.Width - 40 - btnProcessReturn.Width, 12);
-                btnCancelReturn.Location = new Point(btnProcessReturn.Left - 10 - btnCancelReturn.Width, 12);
-            };
-            footerBar.Controls.AddRange(new Control[] { lblBuilderStatus, lblRefundTotalFooter, btnCancelReturn, btnProcessReturn });
-            pnlReturnBuilderView.Controls.Add(footerBar);
-
             void RestackBuilder(object s, EventArgs e)
             {
                 int bodyW = Math.Max(760, pnlReturnBuilderView.Width);
@@ -1268,9 +1331,11 @@ namespace POSAPP.Sales
                 cartCard.Width = cardW;
                 y = cartCard.Bottom + 16;
                 detailsCard.Location = new Point(24, y);
-                footerBar.Location = new Point(24, detailsCard.Bottom + 16);
-                footerBar.Width = cardW;
-                pnlReturnBuilderView.Height = footerBar.Bottom + 24;
+                // Extra bottom padding so the last card never sits flush against
+                // (or under) the sticky footer — the footer lives outside this
+                // scrollable view, so this is just breathing room at the end of
+                // the scrollable content.
+                pnlReturnBuilderView.Height = detailsCard.Bottom + 32;
             }
             linesCard.Resize += RestackBuilder;
             cartCard.Resize += RestackBuilder;
@@ -1371,6 +1436,7 @@ namespace POSAPP.Sales
             pnlOrderDetailView.Visible = false;
             pnlReturnBuilderView.Visible = true;
             pnlDetailBody.AutoScrollPosition = Point.Empty;
+            pnlBuilderFooter.Visible = true;   // sticky footer appears only in builder mode
             btnCreateMenu.Enabled = false;
             pnlReturnBuilderView.Invalidate(true);
 
@@ -1384,6 +1450,7 @@ namespace POSAPP.Sales
             pnlReturnBuilderView.Visible = false;
             pnlOrderDetailView.Visible = true;
             pnlDetailBody.AutoScrollPosition = Point.Empty;
+            pnlBuilderFooter.Visible = false;
             btnCreateMenu.Enabled = true;
             pnlOrderDetailView.Invalidate(true);
         }
