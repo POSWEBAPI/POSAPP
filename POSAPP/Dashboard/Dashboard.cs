@@ -55,7 +55,7 @@ namespace POSAPP
         private bool _drag;
         private Point _dragCursor, _dragForm;
         private Button _activeNav;
-
+        private System.Windows.Forms.Timer _resizeDebounce;
         private int _selectedCompanyId;
         private int _selectedStoreId;
         private string _companyName = " ";
@@ -179,6 +179,21 @@ namespace POSAPP
             _clockTimer = new System.Windows.Forms.Timer { Interval = 60_000 };
             _clockTimer.Tick += (s, _) => UpdateDateTime();
             _clockTimer.Start();
+
+            this.Resize += (s, ev) =>
+            {
+                _resizeDebounce?.Stop();
+                _resizeDebounce?.Dispose();
+                _resizeDebounce = new System.Windows.Forms.Timer { Interval = 150 };
+                _resizeDebounce.Tick += (ts, te) =>
+                {
+                    _resizeDebounce.Stop();
+                    _resizeDebounce.Dispose();
+                    if (panelContent?.Controls.Count > 0 && panelContent.Controls[0] is Panel inner)
+                        RebuildInner(inner);
+                };
+                _resizeDebounce.Start();
+            };
 
             foreach (Control c in new Control[] { this, panelMain, panelTopBar, panelContent })
                 c.Click += (s, _) => panelProfileSubmenu.Visible = false;
@@ -513,17 +528,17 @@ namespace POSAPP
 
         private void LoadCompanyInfo()
         {
-            _companyName = "Radical Investment Pty Ltd";
-            _companyAddress = "FLO-TEK Pipes & Irrigation, PO Box 10723, Lobatse Botswana, BWA";
-            _companyPhone = "";
-            _companyVat = "BW00000724614-00-05-17";
-            _companyWebsite = "www.flotekafrica.com";
-            _salesOfficeInfo =
-                "Gaborone Sales office|Phone: +267 3972001/3/4|Fax: +267 3872014" +
-                "||" +
-                "Phakalane Sales Office|Phone: +267 3972001|Fax: +267 3872014" +
-                "||" +
-                "Francistown Sales office|Phone: +267 2410248|Fax: +267 2410249";
+        //    _companyName = "Radical Investment Pty Ltd";
+        //    _companyAddress = "FLO-TEK Pipes & Irrigation, PO Box 10723, Lobatse Botswana, BWA";
+        //    _companyPhone = "";
+        //    _companyVat = "BW00000724614-00-05-17";
+        //    _companyWebsite = "www.flotekafrica.com";
+        //    _salesOfficeInfo =
+        //        "Gaborone Sales office|Phone: +267 3972001/3/4|Fax: +267 3872014" +
+        //        "||" +
+        //        "Phakalane Sales Office|Phone: +267 3972001|Fax: +267 3872014" +
+        //        "||" +
+        //        "Francistown Sales office|Phone: +267 2410248|Fax: +267 2410249";
         }
 
         private void BuildLogoGlow()
@@ -712,14 +727,14 @@ namespace POSAPP
         // ══════════════════════════════════════════════════════════════════
         // CONNECTIVITY
         // ══════════════════════════════════════════════════════════════════
-       // private const string ApiBaseUrl = "https://localhost:7022";
+        //private const string ApiBaseUrl = "https://localhost:7022";
         //private const string ApiBaseUrl = "https://purplemoonapi.mythitsolutions.co.in";
 
-        private const string ApiBaseUrl = "https://Shriposapi.mythitsolutions.co.in";
+        //private const string ApiBaseUrl = "https://Shriposapi.mythitsolutions.co.in";
 
-        //private const string ApiBaseUrl = "https://eurotexapi.mythitsolutions.co.in";
+        private static string ApiBaseUrl => AppConfig.BaseUrl;
 
-       
+
 
         private bool GetOnline()
         {
@@ -1611,6 +1626,12 @@ namespace POSAPP
             _paymentPanel?.Invalidate();
         }
 
+        private void btnNavPurchaseOrder_Click(object sender, EventArgs e)
+        {
+            SetActiveNav(btnNavPurchaseOrder);
+            ShowPage(new POSAPP.Sales.PurchaseOrderForm(_selectedCompanyId, _currencySymbol));
+        }
+
 
 
         // REPLACE existing ApplyWidgetData
@@ -1709,7 +1730,8 @@ namespace POSAPP
     _topProdAnimTimer?.Stop(); _topProdAnimTimer?.Dispose();
     _chartAnimTimer?.Stop(); _chartAnimTimer?.Dispose();
     _statAnimTimer?.Stop(); _statAnimTimer?.Dispose();
-    base.OnFormClosed(e);
+            _resizeDebounce?.Stop(); _resizeDebounce?.Dispose();
+            base.OnFormClosed(e);
 }
         private (decimal salesToday, int orderCount, int unpaidCount, decimal returnsTotal) LoadDashboardStats()
         {

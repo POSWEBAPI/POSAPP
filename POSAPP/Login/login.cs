@@ -402,20 +402,23 @@ namespace POSAPP
             catch { return false; }
         }
 
-        private static string GetApiBaseUrl()
-        {
-            try
-            {
-                string cfg = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.txt");
-                if (File.Exists(cfg))
-                {
-                    string url = File.ReadAllText(cfg).Trim();
-                    if (!string.IsNullOrEmpty(url)) return url;
-                }
-            }
-            catch { }
-            return "https://purplemoonapi.mythitsolutions.co.in";
-        }
+        private static string GetApiBaseUrl() => AppConfig.BaseUrl;
+
+        //private static string GetApiBaseUrl()
+        //{
+        //    try
+        //    {
+        //        string cfg = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.txt");
+        //        if (File.Exists(cfg))
+        //        {
+        //            string url = File.ReadAllText(cfg).Trim();
+        //            if (!string.IsNullOrEmpty(url)) return url;
+        //        }
+        //    }
+        //    catch { }
+        //    return "https://purplemoonapi.mythitsolutions.co.in";
+        //    // return "https://localhost:7022";
+        //}
 
         private void ApplyLoginResult(UserInfo user, string token)
         {

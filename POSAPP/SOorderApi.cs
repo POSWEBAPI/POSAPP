@@ -136,6 +136,7 @@ namespace POSAPP.Payment
         [JsonPropertyName("deliveryAddress")] public string DeliveryAddress { get; set; } = "";
         [JsonPropertyName("deliveryDate")] public DateTime DeliveryDate { get; set; }
         [JsonPropertyName("status")] public string Status { get; set; } = "";
+        [JsonPropertyName("WinPos")] public string WinPos { get; set; } = "";
         [JsonPropertyName("lines")] public List<CreateSOLinePayload> Lines { get; set; } = new();
         [JsonPropertyName("charges")] public List<CreateSOChargePayload> Charges { get; set; } = new();
     }
@@ -144,7 +145,9 @@ namespace POSAPP.Payment
     {
      
         // TODO: set this to the same base URL your React app's api.js points to
-        public static string BaseUrl = "https://shriposapi.mythitsolutions.co.in";
+        //public static string BaseUrl = "https://shriposapi.mythitsolutions.co.in";
+       // public static string BaseUrl = "https://localhost:7022";
+        public static string BaseUrl = AppConfig.BaseUrl.TrimEnd('/');
 
         private static readonly HttpClient _http = new HttpClient();
 
@@ -674,7 +677,6 @@ namespace POSAPP.Payment
                 return (false, null, null);
             }
         }
-
         public static async Task<(int? InvoiceId, string? Error)> CreateSOInvoiceFromSalesOrderAsync(SalesOrderApiRow so)
         {
             try
@@ -682,22 +684,43 @@ namespace POSAPP.Payment
                 List<SOInvoiceLinePayload> lines;
                 if (so.Lines != null)
                 {
-                    lines = so.Lines.Select(l => new SOInvoiceLinePayload
+                    // Item name often isn't returned on SO lines — resolve missing ones from the item cache.
+                    Dictionary<int, string>? itemNameMap = null;
+                    if (so.Lines.Any(l => string.IsNullOrWhiteSpace(l.ItemName)))
                     {
-                        ItemNo = l.ItemId,
-                        ItemName = l.ItemName,
-                        Qty = l.Qty,
-                        UOM = l.UOM,
-                        UnitPrice = l.UnitPrice,
-                        ChargesAmount = l.Charges ?? 0m,
-                        Tax = 0,
-                        DiscountAmount = l.DiscountAmount ?? 0m
+                        itemNameMap = await GetItemNameMapAsync().ConfigureAwait(false);
+                    }
+
+                    lines = so.Lines.Select(l =>
+                    {
+                        string resolvedName = l.ItemName;
+                        if (string.IsNullOrWhiteSpace(resolvedName) &&
+                            itemNameMap != null &&
+                            itemNameMap.TryGetValue(l.ItemId, out var nameFromCache))
+                        {
+                            resolvedName = nameFromCache;
+                        }
+
+                        return new SOInvoiceLinePayload
+                        {
+                            ItemNo = l.ItemId,
+                            ItemName = resolvedName ?? "",
+                            BatchNo = null,
+                            SerialNo = null,
+                            Qty = l.Qty,
+                            UOM = l.UOM,
+                            UnitPrice = l.UnitPrice,
+                            ChargesAmount = l.Charges ?? 0m,
+                            Tax = 0,
+                            DiscountAmount = l.DiscountAmount ?? 0m
+                        };
                     }).ToList();
                 }
                 else
                 {
                     lines = new List<SOInvoiceLinePayload>();
                 }
+                // ... rest unchanged
 
                 var payload = new SOInvoicePayload
                 {
@@ -842,9 +865,7 @@ namespace POSAPP.Payment
         {
             [JsonPropertyName("companyID")] public int CompanyId { get; set; }
             [JsonPropertyName("customerID")] public int CustomerId { get; set; }
-            [JsonPropertyName("paymentDate")] public DateTime PaymentDate { get; set; }
-            // "Cash" here is what tells the API the offset account type is Cash —
-            // for non-cash methods, set BankAccountId to the actual bank/GL account.
+            [JsonPropertyName("paymentDate")] public DateTime PaymentDate { get; set; } 
             [JsonPropertyName("paymentMethod")] public string PaymentMethod { get; set; } = "Cash";
             [JsonPropertyName("bankAccountID")] public int BankAccountId { get; set; } = 0;
             [JsonPropertyName("referenceNo")] public string ReferenceNo { get; set; } = "";
@@ -856,8 +877,7 @@ namespace POSAPP.Payment
             [JsonPropertyName("createdBy")] public int CreatedBy { get; set; }
             [JsonPropertyName("settlements")] public List<CustomerPaymentSettlementDto> Settlements { get; set; } = new();
         }
-
-        // TODO: confirm exact route/verb against customerPaymentApi.js
+         
         public static async Task<(bool Success, int? PaymentId, string PaymentNo)> SaveCustomerPaymentAsync(SaveCustomerPaymentPayload payload)
         {
             try

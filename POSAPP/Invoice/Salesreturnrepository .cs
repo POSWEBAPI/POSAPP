@@ -4,6 +4,8 @@ using System.Data.SqlClient;
 using System.Data.SQLite;
 using System.Globalization;
 using System.IO;
+using System.Text.Json.Serialization;
+using POSAPP;
 
 namespace POSAPP.Invoice
 {
@@ -14,15 +16,26 @@ namespace POSAPP.Invoice
     {
         public int Id { get; set; }
         public string ReturnInvoiceNo { get; set; }
+
+        /// <summary>Comma-joined list of every distinct source invoice referenced by Lines.</summary>
         public string OriginalInvoiceNo { get; set; }
+
         public string CustomerName { get; set; }
         public string CashierName { get; set; }
         public string RefundMethod { get; set; }
         public decimal RefundTotal { get; set; }
         public DateTime ReturnDate { get; set; }
         public int CompanyId { get; set; }
+
+        // ── ADDED — header-level fields from the "concept" flow ────────────────
+        public string ReturnReason { get; set; }
+        public string RmaNumber { get; set; }
+        public string DispositionCode { get; set; }
+        // ─────────────────────────────────────────────────────────────────────
+
         public List<SalesReturnLine> Lines { get; set; } = new List<SalesReturnLine>();
     }
+
     public class SalesReturnLine
     {
         public int Id { get; set; }
@@ -33,30 +46,44 @@ namespace POSAPP.Invoice
         public decimal RefundAmt { get; set; }
         public string Barcode { get; set; }
 
-        // ── ADD THESE TWO ──────────────────────────────
         /// <summary>Tax percentage (e.g. 9 for 9%). 0 if none.</summary>
         public decimal TaxPct { get; set; } = 0m;
 
         /// <summary>Unit of measure (e.g. "EA", "KG", "PCS"). Defaults to EA.</summary>
         public string UOM { get; set; } = "EA";
-        // ───────────────────────────────────────────────
+
+        // ── ADDED — a single return can now span several source invoices, so
+        // each line remembers exactly which invoice it came from. ─────────────
+        public string OriginalInvoiceNo { get; set; }
     }
+
     public class OriginalInvoiceLine
     {
-      
         public string ItemName { get; set; }
         public int Qty { get; set; }
         public decimal UnitPrice { get; set; }
         public decimal DiscountPct { get; set; }
         public string Barcode { get; set; }
-
-        // ── ADD THESE TWO ──────────────────────────────
-        /// <summary>Tax percentage (e.g. 9 for 9%). 0 if none.</summary>
         public decimal TaxPct { get; set; } = 0m;
-
-        /// <summary>Unit of measure (e.g. "EA", "KG", "PCS"). Defaults to EA.</summary>
         public string UOM { get; set; } = "EA";
-        // ───────────────────────────────────────────────
+    }
+    public class CustomerFullDto
+    {
+        [JsonPropertyName("customerID")] public int CustomerID { get; set; }
+        [JsonPropertyName("customerCode")] public string CustomerCode { get; set; } = "";
+        [JsonPropertyName("customerName")] public string CustomerName { get; set; } = "";
+        [JsonPropertyName("address")] public string Address { get; set; } = "";
+        [JsonPropertyName("city")] public string City { get; set; } = "";
+        [JsonPropertyName("country")] public string Country { get; set; } = "";
+        [JsonPropertyName("mobile")] public string Mobile { get; set; } = "";
+        [JsonPropertyName("email")] public string Email { get; set; } = "";
+        [JsonPropertyName("status")] public bool Status { get; set; }
+    }
+    public class ReturnedQtyDto
+    {
+        [JsonPropertyName("barcode")] public string Barcode { get; set; }
+        [JsonPropertyName("itemName")] public string ItemName { get; set; }
+        [JsonPropertyName("totalReturned")] public int TotalReturned { get; set; }
     }
 
     // Aggregated row for the Returns Report
@@ -71,12 +98,30 @@ namespace POSAPP.Invoice
         public DateTime ReturnDate { get; set; }
         public int LineCount { get; set; }
         public int TotalItemsReturned { get; set; }
+        public string ReturnReason { get; set; }
+        public string RmaNumber { get; set; }
+        public string DispositionCode { get; set; }
+    }
+
+    // ── ADDED — support models for the customer-first return flow ─────────────
+    public class CustomerLite
+    {
+        public int CustomerId { get; set; }
+        public string CustomerName { get; set; }
+    }
+
+    public class InvoiceLite
+    {
+        public string InvoiceNo { get; set; }
+        public DateTime InvoiceDate { get; set; }
+        public decimal Total { get; set; }
+        public int LineCount { get; set; }
     }
 
     // ══════════════════════════════════════════════════════════════════════════
     //  SalesReturnRepository
     // ══════════════════════════════════════════════════════════════════════════
-    public static class SalesReturnRepository
+    public static partial class SalesReturnRepository
     {
         private static readonly string DbPath =
             Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ShriPOS.db");
@@ -102,19 +147,25 @@ namespace POSAPP.Invoice
                     RefundTotal       REAL    NOT NULL DEFAULT 0,
                     ReturnDate        TEXT    NOT NULL,
                     CompanyId         INTEGER NOT NULL DEFAULT 0,
-                    Notes             TEXT    NULL
+                    Notes             TEXT    NULL,
+                    ReturnReason      TEXT    NULL,
+                    RmaNumber         TEXT    NULL,
+                    DispositionCode   TEXT    NULL
                 );");
 
             Execute(conn, @"
                 CREATE TABLE IF NOT EXISTS SalesReturnLine (
-                    LineId      INTEGER PRIMARY KEY AUTOINCREMENT,
-                    ReturnId    INTEGER NOT NULL,
-                    ItemName    TEXT    NOT NULL,
-                    UnitPrice   REAL    NOT NULL DEFAULT 0,
-                    DiscountPct REAL    NOT NULL DEFAULT 0,
-                    ReturnQty   INTEGER NOT NULL DEFAULT 1,
-                    RefundAmt   REAL    NOT NULL DEFAULT 0,
-                    Barcode     TEXT    NULL,
+                    LineId           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ReturnId         INTEGER NOT NULL,
+                    ItemName         TEXT    NOT NULL,
+                    UnitPrice        REAL    NOT NULL DEFAULT 0,
+                    DiscountPct      REAL    NOT NULL DEFAULT 0,
+                    ReturnQty        INTEGER NOT NULL DEFAULT 1,
+                    RefundAmt        REAL    NOT NULL DEFAULT 0,
+                    Barcode          TEXT    NULL,
+                    TaxPct           REAL    NOT NULL DEFAULT 0,
+                    UOM              TEXT    NOT NULL DEFAULT 'EA',
+                    OriginalInvoiceNo TEXT   NULL,
                     FOREIGN KEY(ReturnId) REFERENCES SalesReturnHeader(ReturnId)
                 );");
 
@@ -122,6 +173,23 @@ namespace POSAPP.Invoice
             Execute(conn, @"
                 CREATE INDEX IF NOT EXISTS idx_return_orig_inv
                 ON SalesReturnHeader(OriginalInvoiceNo);");
+
+            // ── Migration guard: tables created by an older build won't have
+            // the newer columns. ALTER TABLE ... ADD COLUMN is safe to attempt
+            // repeatedly — SQLite throws "duplicate column name" if it already
+            // exists, which we just swallow. ──────────────────────────────────
+            TryAddColumn(conn, "SalesReturnHeader", "ReturnReason", "TEXT");
+            TryAddColumn(conn, "SalesReturnHeader", "RmaNumber", "TEXT");
+            TryAddColumn(conn, "SalesReturnHeader", "DispositionCode", "TEXT");
+            TryAddColumn(conn, "SalesReturnLine", "TaxPct", "REAL NOT NULL DEFAULT 0");
+            TryAddColumn(conn, "SalesReturnLine", "UOM", "TEXT NOT NULL DEFAULT 'EA'");
+            TryAddColumn(conn, "SalesReturnLine", "OriginalInvoiceNo", "TEXT");
+        }
+
+        private static void TryAddColumn(SQLiteConnection conn, string table, string column, string type)
+        {
+            try { Execute(conn, $"ALTER TABLE {table} ADD COLUMN {column} {type};"); }
+            catch { /* column already exists — nothing to do */ }
         }
 
         // ══════════════════════════════════════════════════════════════════════
@@ -155,6 +223,124 @@ namespace POSAPP.Invoice
         }
 
         // ══════════════════════════════════════════════════════════════════════
+        //  CUSTOMER / INVOICE LOOKUPS  (drives the customer-first return flow)
+        // ══════════════════════════════════════════════════════════════════════
+
+        /// <summary>Distinct customer names from SOInvoiceHeader matching the search text.</summary>
+        public static List<CustomerLite> SearchCustomers(string query, int companyId)
+        {
+            var list = new List<CustomerLite>();
+            if (!File.Exists(DbPath) || string.IsNullOrWhiteSpace(query)) return list;
+
+            try
+            {
+                using var conn = Open();
+                const string sql = @"
+                    SELECT DISTINCT TRIM(InvoiceAccountName) AS CustomerName
+                    FROM   SOInvoiceHeader
+                    WHERE  CompanyID = @co
+                      AND  InvoiceAccountName IS NOT NULL
+                      AND  TRIM(InvoiceAccountName) <> ''
+                      AND  LOWER(InvoiceAccountName) LIKE LOWER(@q)
+                    ORDER  BY CustomerName
+                    LIMIT  50;";
+
+                using var cmd = new SQLiteCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@co", companyId);
+                cmd.Parameters.AddWithValue("@q", $"%{query.Trim()}%");
+
+                using var r = cmd.ExecuteReader();
+                while (r.Read())
+                {
+                    string name = r["CustomerName"]?.ToString();
+                    if (!string.IsNullOrWhiteSpace(name))
+                        list.Add(new CustomerLite { CustomerName = name });
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("SearchCustomers ERROR: " + ex.Message);
+            }
+            return list;
+        }
+        public static async Task<List<POSAPP.CustomerFullDto>> GetActiveCustomersAsync(int companyId)
+        {
+            var list = new List<POSAPP.CustomerFullDto>();
+            try
+            {
+                var result = await ApiClient.GetAsync<POSAPP.CustomerListDto>("/api/customers");
+                list = (result?.Data ?? new List<POSAPP.CustomerFullDto>())
+                    .Where(c => c.Status)
+                    .OrderBy(c => c.CustomerName, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                // NOTE: companyId is currently unused — CustomerFullDto has no CompanyID
+                // property, so there's nothing to filter by per-company here. If your
+                // customers ARE scoped per company, see the two options below.
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("GetActiveCustomersAsync ERROR: " + ex.Message);
+            }
+            return list;
+        }
+
+        /// <summary>All invoices billed to this customer name, newest first, with a
+        /// rough Total (sum of line net amounts, pre-tax) and item-line count.</summary>
+        public static List<InvoiceLite> GetInvoicesForCustomer(string customerName, int companyId)
+        {
+            var list = new List<InvoiceLite>();
+            if (!File.Exists(DbPath) || string.IsNullOrWhiteSpace(customerName)) return list;
+
+            try
+            {
+                using var conn = Open();
+                const string sql = @"
+                    SELECT  h.InvoiceNo,
+                            h.InvoiceDate,
+                            COALESCE(SUM(l.LineNetAmount), 0) AS Total,
+                            COUNT(l.InvoiceLineID)            AS LineCount
+                    FROM    SOInvoiceHeader h
+                    JOIN    SOInvoiceLine   l ON l.InvoiceID = h.InvoiceID
+                    WHERE   h.CompanyID = @co
+                      AND   TRIM(h.InvoiceAccountName) = TRIM(@cust)
+                    GROUP BY h.InvoiceID, h.InvoiceNo, h.InvoiceDate
+                    ORDER BY h.InvoiceDate DESC;";
+
+                using var cmd = new SQLiteCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@co", companyId);
+                cmd.Parameters.AddWithValue("@cust", customerName.Trim());
+
+                using var r = cmd.ExecuteReader();
+                while (r.Read())
+                {
+                    DateTime invDate = DateTime.Now;
+                    string raw = r["InvoiceDate"]?.ToString();
+                    if (!string.IsNullOrWhiteSpace(raw))
+                    {
+                        if (!DateTime.TryParseExact(raw, "yyyy-MM-dd HH.mm.ss",
+                                CultureInfo.InvariantCulture, DateTimeStyles.None, out invDate))
+                        {
+                            DateTime.TryParse(raw.Replace('.', ':'), out invDate);
+                        }
+                    }
+
+                    list.Add(new InvoiceLite
+                    {
+                        InvoiceNo = r["InvoiceNo"]?.ToString() ?? "",
+                        InvoiceDate = invDate,
+                        Total = Convert.ToDecimal(r["Total"]),
+                        LineCount = Convert.ToInt32(r["LineCount"])
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("GetInvoicesForCustomer ERROR: " + ex.Message);
+            }
+            return list;
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
         //  SAVE RETURN
         // ══════════════════════════════════════════════════════════════════════
         public static int SaveReturn(SalesReturnRecord record)
@@ -170,10 +356,12 @@ namespace POSAPP.Invoice
                 using (var cmd = new SQLiteCommand(@"
             INSERT INTO SalesReturnHeader
                 (ReturnInvoiceNo, OriginalInvoiceNo, CustomerName, CashierName,
-                 RefundMethod, RefundTotal, ReturnDate, CompanyId)
+                 RefundMethod, RefundTotal, ReturnDate, CompanyId,
+                 ReturnReason, RmaNumber, DispositionCode)
             VALUES
                 (@rtn, @orig, @cust, @cashier,
-                 @method, @total, @date, @company);", conn, tx))
+                 @method, @total, @date, @company,
+                 @reason, @rma, @disp);", conn, tx))
                 {
                     cmd.Parameters.AddWithValue("@rtn", record.ReturnInvoiceNo);
                     cmd.Parameters.AddWithValue("@orig", record.OriginalInvoiceNo);
@@ -183,6 +371,9 @@ namespace POSAPP.Invoice
                     cmd.Parameters.AddWithValue("@total", (double)record.RefundTotal);
                     cmd.Parameters.AddWithValue("@date", now);
                     cmd.Parameters.AddWithValue("@company", record.CompanyId);
+                    cmd.Parameters.AddWithValue("@reason", (object)record.ReturnReason ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@rma", (object)record.RmaNumber ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@disp", (object)record.DispositionCode ?? DBNull.Value);
                     cmd.ExecuteNonQuery();
                     returnId = conn.LastInsertRowId;
                 }
@@ -194,10 +385,10 @@ namespace POSAPP.Invoice
                     using var lc = new SQLiteCommand(@"
                 INSERT INTO SalesReturnLine
                     (ReturnId, ItemName, UnitPrice, DiscountPct,
-                     ReturnQty, RefundAmt, Barcode)
+                     ReturnQty, RefundAmt, Barcode, TaxPct, UOM, OriginalInvoiceNo)
                 VALUES
                     (@rid, @name, @price, @disc,
-                     @qty, @refund, @barcode);", conn, tx);
+                     @qty, @refund, @barcode, @taxpct, @uom, @origline);", conn, tx);
                     lc.Parameters.AddWithValue("@rid", returnId);
                     lc.Parameters.AddWithValue("@name", line.ItemName);
                     lc.Parameters.AddWithValue("@price", (double)line.UnitPrice);
@@ -205,9 +396,12 @@ namespace POSAPP.Invoice
                     lc.Parameters.AddWithValue("@qty", line.ReturnQty);
                     lc.Parameters.AddWithValue("@refund", (double)line.RefundAmt);
                     lc.Parameters.AddWithValue("@barcode", line.Barcode ?? "");
+                    lc.Parameters.AddWithValue("@taxpct", (double)line.TaxPct);
+                    lc.Parameters.AddWithValue("@uom", string.IsNullOrWhiteSpace(line.UOM) ? "EA" : line.UOM);
+                    lc.Parameters.AddWithValue("@origline", (object)line.OriginalInvoiceNo ?? (object)record.OriginalInvoiceNo ?? DBNull.Value);
                     lc.ExecuteNonQuery();
 
-                    System.Diagnostics.Debug.WriteLine($"SaveReturn: Line inserted — {line.ItemName} qty={line.ReturnQty}");
+                    System.Diagnostics.Debug.WriteLine($"SaveReturn: Line inserted — {line.ItemName} qty={line.ReturnQty} inv={line.OriginalInvoiceNo}");
                 }
 
                 tx.Commit();
@@ -290,7 +484,7 @@ namespace POSAPP.Invoice
             return list;
         }
         // ══════════════════════════════════════════════════════════════════════
-        //  GET CUSTOMER FOR INVOICE
+        //  GET CUSTOMER FOR INVOICE  (kept for backward compatibility)
         // ══════════════════════════════════════════════════════════════════════
         public static string GetCustomerForInvoice(string invoiceNo)
         {
@@ -333,7 +527,8 @@ namespace POSAPP.Invoice
                         SELECT COALESCE(SUM(rl.ReturnQty), 0) AS ReturnQty
                         FROM SalesReturnHeader rh
                         JOIN SalesReturnLine   rl ON rl.ReturnId = rh.ReturnId
-                        WHERE rh.OriginalInvoiceNo = @inv
+                        WHERE rl.OriginalInvoiceNo = @inv
+                           OR rh.OriginalInvoiceNo = @inv
                     ) rtn;";
 
                 using var cmd = new SQLiteCommand(sql, conn);
@@ -371,6 +566,9 @@ namespace POSAPP.Invoice
                         h.RefundMethod,
                         h.RefundTotal,
                         h.ReturnDate,
+                        h.ReturnReason,
+                        h.RmaNumber,
+                        h.DispositionCode,
                         COUNT(l.LineId)    AS LineCount,
                         SUM(l.ReturnQty)   AS TotalItemsReturned
                     FROM SalesReturnHeader h
@@ -397,6 +595,9 @@ namespace POSAPP.Invoice
                         RefundMethod = r["RefundMethod"]?.ToString() ?? "cash",
                         RefundTotal = Convert.ToDecimal(r["RefundTotal"]),
                         ReturnDate = DateTime.TryParse(r["ReturnDate"]?.ToString(), out var dt) ? dt : DateTime.Now,
+                        ReturnReason = r["ReturnReason"] == DBNull.Value ? "" : r["ReturnReason"]?.ToString(),
+                        RmaNumber = r["RmaNumber"] == DBNull.Value ? "" : r["RmaNumber"]?.ToString(),
+                        DispositionCode = r["DispositionCode"] == DBNull.Value ? "" : r["DispositionCode"]?.ToString(),
                         LineCount = Convert.ToInt32(r["LineCount"]),
                         TotalItemsReturned = r["TotalItemsReturned"] == DBNull.Value
                                             ? 0 : Convert.ToInt32(r["TotalItemsReturned"])
@@ -438,11 +639,22 @@ namespace POSAPP.Invoice
                         DiscountPct = Convert.ToDecimal(r["DiscountPct"]),
                         ReturnQty = Convert.ToInt32(r["ReturnQty"]),
                         RefundAmt = Convert.ToDecimal(r["RefundAmt"]),
-                        Barcode = r["Barcode"]?.ToString() ?? ""
+                        Barcode = r["Barcode"]?.ToString() ?? "",
+                        TaxPct = HasColumn(r, "TaxPct") && r["TaxPct"] != DBNull.Value ? Convert.ToDecimal(r["TaxPct"]) : 0m,
+                        UOM = HasColumn(r, "UOM") && r["UOM"] != DBNull.Value ? r["UOM"].ToString() : "EA",
+                        OriginalInvoiceNo = HasColumn(r, "OriginalInvoiceNo") && r["OriginalInvoiceNo"] != DBNull.Value
+                                             ? r["OriginalInvoiceNo"].ToString() : ""
                     });
             }
             catch { }
             return list;
+        }
+
+        private static bool HasColumn(SQLiteDataReader r, string name)
+        {
+            for (int i = 0; i < r.FieldCount; i++)
+                if (string.Equals(r.GetName(i), name, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
         }
 
         // Summary totals for the toolbar strip
@@ -501,11 +713,9 @@ namespace POSAPP.Invoice
 
             try
             {
-                using var conn = new SQLiteConnection( $"Data Source={DbPath};Version=3;");
+                using var conn = new SQLiteConnection($"Data Source={DbPath};Version=3;");
                 conn.Open();
 
-                // Adjust the table/column names below to match your actual schema.
-                // Common variants: Sales.SaleDate | Sales.InvoiceDate | Sales.CreatedAt
                 const string sql = @"
     SELECT InvoiceDate
     FROM   SOInvoiceHeader
@@ -545,42 +755,35 @@ namespace POSAPP.Invoice
                 return null;
             }
         }
-        // Returns a dictionary of  Barcode-or-ItemName → total qty already returned
-        // for a given original invoice number.
-        public static Dictionary<string, int> GetReturnedQtys(string originalInvoiceNo)
+
+        // ══════════════════════════════════════════════════════════════════════
+        //  GET RETURNED QTYS — now sourced from the API instead of local SQLite
+        // ══════════════════════════════════════════════════════════════════════
+        public static async Task<Dictionary<string, int>> GetReturnedQtysAsync(string originalInvoiceNo)
         {
             var dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            if (!File.Exists(DbPath)) return dict;
+            if (string.IsNullOrWhiteSpace(originalInvoiceNo)) return dict;
 
             try
             {
-                using var conn = Open();
-                const string sql = @"
-            SELECT  rl.Barcode, rl.ItemName, SUM(rl.ReturnQty) AS TotalReturned
-            FROM    SalesReturnLine   rl
-            JOIN    SalesReturnHeader rh ON rh.ReturnId = rl.ReturnId
-            WHERE   rh.OriginalInvoiceNo = @inv
-            GROUP   BY rl.Barcode, rl.ItemName;";
+                var result = await ApiClient.GetAsync<List<ReturnedQtyDto>>(
+                    $"/api/salesreturns/returned-qtys?invoiceNo={Uri.EscapeDataString(originalInvoiceNo)}");
 
-                using var cmd = new SQLiteCommand(sql, conn);
-                cmd.Parameters.AddWithValue("@inv", originalInvoiceNo);
-                using var rdr = cmd.ExecuteReader();
-                while (rdr.Read())
+                if (result != null)
                 {
-                    string key = rdr["Barcode"]?.ToString()?.Trim();
-                    if (string.IsNullOrWhiteSpace(key))
-                        key = rdr["ItemName"]?.ToString()?.Trim();
-                    if (string.IsNullOrWhiteSpace(key)) continue;
+                    foreach (var r in result)
+                    {
+                        string key = !string.IsNullOrWhiteSpace(r.Barcode) ? r.Barcode.Trim() : r.ItemName?.Trim();
+                        if (string.IsNullOrWhiteSpace(key)) continue;
 
-                    int qty = Convert.ToInt32(rdr["TotalReturned"]);
-                    dict[key] = dict.ContainsKey(key) ? dict[key] + qty : qty;
+                        dict[key] = dict.ContainsKey(key) ? dict[key] + r.TotalReturned : r.TotalReturned;
+                    }
                 }
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine("GetReturnedQtys: " + ex.Message);
+                System.Diagnostics.Debug.WriteLine("GetReturnedQtysAsync ERROR: " + ex.Message);
             }
-
             return dict;
         }
     }

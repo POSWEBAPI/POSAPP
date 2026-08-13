@@ -21,6 +21,7 @@ namespace POSAPP
         private BufferedPanel _salesCard;
         private POSAPP.BufferedPanel panelProfileSubmenu;
         private int _topProductsHoverIndex = -1;
+        private Button btnNavPurchaseOrder;
         private Panel _topProductsPanel; // store reference to the panel
 
         private Label lblTitleBrand;
@@ -173,9 +174,17 @@ namespace POSAPP
         {
             this.SuspendLayout();
 
-            ClientSize = new Size(1280, 800);
+            var workArea = Screen.FromControl(this) != null
+      ? Screen.PrimaryScreen.WorkingArea
+      : new Rectangle(0, 0, 1280, 800);
+
+            MinimumSize = new Size(1100, 650);      // never collapse below usable size
+            ClientSize = new Size(
+                Math.Max(MinimumSize.Width, workArea.Width),
+                Math.Max(MinimumSize.Height, workArea.Height));
             FormBorderStyle = FormBorderStyle.None;
-            StartPosition = FormStartPosition.CenterScreen;
+            StartPosition = FormStartPosition.Manual;
+            Location = workArea.Location;
             BackColor = C_LightBg;
             Load += Form2_Load;
 
@@ -295,8 +304,11 @@ namespace POSAPP
             btnNavTenderDeclaration = MakeNavBtn("📋", "Tender Declaration", NAV_START + NAV_H * 7, btnNavTenderDeclaration_Click);
             btnNavCloseShift = MakeNavBtn("🔒", "Shift", NAV_START + NAV_H * 8, btnNavCloseShift_Click);
             btnNavProfile = MakeNavBtn("👤", "My Profile", NAV_START + NAV_H * 9, btnNavProfile_Click);
+        
+ 
+//btnNavPurchaseOrder = MakeNavBtn("🧾", "Purchase Orders", NAV_START + NAV_H* 10, btnNavPurchaseOrder_Click);
 
-            btnNavInventory = btnNavSalesReturn;
+        btnNavInventory = btnNavSalesReturn;
             SetActiveNav(btnNavDashboard);
 
             // ── Reports popup (floats on Form) ─────────────────────────────
@@ -533,6 +545,8 @@ namespace POSAPP
             inner.Controls.Clear();
             int cw = inner.Width, gap = 16, y = 4;
 
+            int availH = Math.Max(650, panelContent.ClientSize.Height - panelContent.Padding.Vertical - 8);
+
             // ── STAT CARDS ────────────────────────────────────────────────
             _dashStats = LoadDashboardStats();
             _statAnimTimer = AnimateProgress(_statAnimTimer, v => _statAnimProgress = v,
@@ -553,12 +567,12 @@ namespace POSAPP
     };
 
             int scw = (cw - gap * 3) / 4;
-
+            int statH = Math.Max(96, (int)(availH * 0.13));
             for (int i = 0; i < statData.Length; i++)
             {
                 var d = statData[i];
                 int capturedI = i;
-                var card = MakeCard(i * (scw + gap), y, scw, 104);
+                var card = MakeCard(i * (scw + gap), y, scw, statH);
                 card.Cursor = Cursors.Hand;
                 _statCards[i] = card;
 
@@ -606,7 +620,8 @@ namespace POSAPP
             int chartW = (int)(cw * 0.42);
             int topProdW = (int)(cw * 0.30);
             int lowStockW = cw - chartW - topProdW - gap * 2;
-            int midH = 290;
+            int midH = Math.Max(260, (int)(availH * 0.34));
+           //int midH = 290;
 
             var salesCard = MakeCard(0, y, chartW, midH);
             salesCard.Paint += PaintSalesChart;
@@ -636,7 +651,8 @@ namespace POSAPP
             int txW = (int)(cw * 0.50);
             int payW = (int)(cw * 0.26);
             int qaW = cw - txW - payW - gap * 2;
-            int botH = 330;
+            //int botH = 330;
+            int botH = Math.Max(280, availH - statH - midH - gap * 3 - 60);
 
             var txCard = MakeCard(0, y, txW, botH);
             BuildTransactionCard(txCard);

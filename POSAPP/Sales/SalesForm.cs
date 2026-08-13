@@ -70,6 +70,7 @@ namespace POSAPP
         private string _barcodeBuffer = "";
         private System.Windows.Forms.Timer _barcodeTimer;
         private bool _isSelecting = false;
+        private bool _isTendering = false;
         private bool? _onlineCache = null;
         private DateTime _onlineChecked = DateTime.MinValue;
         private const int ONLINE_CACHE_SECONDS = 30;
@@ -92,7 +93,7 @@ namespace POSAPP
         private bool _stockSyncInProgress = false;
         private const int STOCK_SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes// order-level dropdown, sits near nudDiscount
         public bool IsQuotation { get; set; } = false;
-
+        private bool IsEmbedded => !this.TopLevel;
 
         private System.Windows.Forms.Timer _productSyncTimer;
         private System.Windows.Forms.Timer _offlineOrderSyncTimer;
@@ -239,28 +240,7 @@ namespace POSAPP
             System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ShriPOS.db");
 
         // ── API URL ───────────────────────────────────────────────────────────
-        private static readonly string ApiBaseUrl = LoadApiBaseUrl();
-
-        private static string LoadApiBaseUrl()
-        {
-            try
-            {
-                string cfg = System.IO.Path.Combine(
-                    AppDomain.CurrentDomain.BaseDirectory, "config.txt");
-                if (System.IO.File.Exists(cfg))
-                {
-                    string url = System.IO.File.ReadAllText(cfg).Trim();
-                    if (!string.IsNullOrEmpty(url)) return url;
-                }
-            }
-            catch { }
-            // return "https://localhost:7022";
-            // return "https://purplemoonapi.mythitsolutions.co.in";
-            return "https://Shriposapi.mythitsolutions.co.in";
-            //return "https://eurotexapi.mythitsolutions.co.in";
-
-
-        }
+        private static string ApiBaseUrl => AppConfig.BaseUrl.TrimEnd('/');
 
         // ── Constructor ───────────────────────────────────────────────────────
         public SalesForm(int companyId)
@@ -282,6 +262,15 @@ namespace POSAPP
         // ══════════════════════════════════════════════════════════════════════
         private async void SalesForm_Load(object sender, EventArgs e)
         {
+
+            //if (IsEmbedded)
+            //{
+            //    panelHeader.Visible = false;
+            //    tblRoot.Dock = DockStyle.Fill;   // reclaim the header's vertical space
+            //                                     // Move the search/barcode boxes into the search card instead, since
+            //                                     // there's no header bar to host them when embedded
+            //    MoveSearchControlsIntoLeftPanel();
+            //}
             SalesOrderApi.BaseUrl = ApiBaseUrl;
             lblOperator.Text = "ADMIN";
             POSAPP.Printer.StockSettings.Load();
@@ -325,6 +314,20 @@ namespace POSAPP
             _ = LoadTaxMasterAsync();
             _ = LoadBankAccountsAsync();
             BuildCustomerSelectDropdown();
+            //panelDiscountCard.Resize += (s, e) =>
+            //{
+            //    int w = panelDiscountCard.Width - 20;
+            //    if (_cmbCustomer != null) _cmbCustomer.Width = w;
+            //    if (_cmbTax != null) _cmbTax.Width = w;
+            //    if (_pnlSaleTypeToggle != null)
+            //    {
+            //        _pnlSaleTypeToggle.Width = w;
+            //        int half = w / 2;
+            //        _btnNormalSaleToggle.Width = half;
+            //        _btnCreditSaleToggle.Location = new Point(half, 0);
+            //        _btnCreditSaleToggle.Width = w - half;
+            //    }
+            //};
             _ = LoadCustomersAsync();
             this.Controls.Add(listSearchResults);
             listSearchResults.BringToFront();
@@ -351,7 +354,7 @@ namespace POSAPP
             // ── Phase 2: refresh from API in background, then keep syncing every 5 min ─
             _ = RefreshProductsFromApiAsync();
             StartProductSyncTimer();
-            StartOfflineOrderSyncTimer();
+            //StartOfflineOrderSyncTimer();
             StartStockSyncTimer();
             nudDiscount.Value = _defaultDiscountPct;
             RefreshCart();
@@ -359,6 +362,33 @@ namespace POSAPP
             BuildGrandTotalBigLabel();
             BuildStockReductionLabel();
             RepositionTitleButtons();
+            panelLeft.Resize += (s, e) =>
+            {
+                int fixedH = panelSearchCard.Height + panelDiscountCard.Height + 12; // margins
+                int availH = panelLeft.ClientSize.Height - fixedH;
+                if (availH < 200) return;
+
+                // Hot items gets ~55% of what's left, recent sales gets the rest via Dock=Fill
+                int hotH = Math.Max(180, (int)(availH * 0.55));
+                panelHotCard.Height = hotH;
+            };
+            System.Windows.Forms.Timer resizeDebounce = null;
+            this.Resize += (s, e) =>
+            {
+                resizeDebounce?.Stop();
+                resizeDebounce?.Dispose();
+                resizeDebounce = new System.Windows.Forms.Timer { Interval = 150 };
+                resizeDebounce.Tick += (ts, te) =>
+                {
+                    resizeDebounce.Stop();
+                    resizeDebounce.Dispose();
+                    RepositionTitleButtons();
+                    RepositionDropdown();
+                    RepositionSearchResults();
+                };
+                resizeDebounce.Start();
+            };
+            this.KeyPreview = true;
             btnMax_Click(sender, e);
 
             try { SalesRepository.EnsureSchema(); }
@@ -414,8 +444,56 @@ namespace POSAPP
             panelFooterBar.SizeChanged += (s, ev) => PositionFooterButtons();
             PositionFooterButtons();
             BuildNumpadDisplay();
+           // panelLeft.PerformLayout();
             // _ = SyncProductsFromApiInBackgroundAsync();   // syncs API → SQLite silently
         }
+        //private void MoveSearchControlsIntoLeftPanel()
+        //{
+        //    // Detach from the (now-hidden) header
+        //    panelHeader.Controls.Remove(txtSearch);
+        //    panelHeader.Controls.Remove(txtBarcode);
+        //    panelHeader.Controls.Remove(lblSearchHeader);
+        //    panelHeader.Controls.Remove(lblBarcodeHeader);
+        //    panelHeader.Controls.Remove(lblSearchSep);
+        //    panelHeader.Controls.Remove(lblBarcodeSep);
+
+        //    // Detach lblStatus from wherever it currently lives
+        //    panelSearchCard.Controls.Remove(lblStatus);
+        //    panelSearchCard.Controls.Clear(); // wipe anything left over from the old single-row layout
+
+        //    panelSearchCard.Padding = new Padding(10, 8, 10, 8);
+
+        //    // Build three explicit row panels, each Dock=Top, added in reverse
+        //    // visual order (last docked-Top control added ends up at the TOP).
+        //    var rowStatus = new Panel { Dock = DockStyle.Top, Height = 22, BackColor = Color.Transparent };
+        //    lblStatus.Dock = DockStyle.Fill;
+        //    lblStatus.AutoSize = false;
+        //    lblStatus.TextAlign = ContentAlignment.MiddleLeft;
+        //    rowStatus.Controls.Add(lblStatus);
+
+        //    var rowBarcode = new Panel { Dock = DockStyle.Top, Height = 26, BackColor = Color.Transparent, Margin = new Padding(0, 4, 0, 0) };
+        //    txtBarcode.Dock = DockStyle.Fill;
+        //    txtBarcode.BorderStyle = BorderStyle.FixedSingle;
+        //    txtBarcode.Font = new Font("Consolas", 9F);
+        //    rowBarcode.Controls.Add(txtBarcode);
+
+        //    var rowSearch = new Panel { Dock = DockStyle.Top, Height = 26, BackColor = Color.Transparent, Margin = new Padding(0, 4, 0, 0) };
+        //    txtSearch.Dock = DockStyle.Fill;
+        //    txtSearch.BorderStyle = BorderStyle.FixedSingle;
+        //    txtSearch.Font = new Font("Segoe UI", 9F);
+        //    rowSearch.Controls.Add(txtSearch);
+
+        //    // Add in order: search (top), barcode (middle), status (bottom)
+        //    panelSearchCard.Controls.Add(rowStatus);
+        //    panelSearchCard.Controls.Add(rowBarcode);
+        //    panelSearchCard.Controls.Add(rowSearch);
+
+        //    // Panel auto-sizes to its docked children — no manual height math needed
+        //    panelSearchCard.Height =
+        //        panelSearchCard.Padding.Vertical
+        //        + rowSearch.Height + rowBarcode.Height + rowStatus.Height
+        //        + rowBarcode.Margin.Top + rowStatus.Margin.Top;
+        //}
         private Dictionary<string, int> _nameToItemId = new(StringComparer.OrdinalIgnoreCase);
 
         private async Task LoadBankAccountsAsync()
@@ -569,8 +647,8 @@ namespace POSAPP
             };
             _lblNormalSaleToggle = new Label
             {
-                Text = "💰  Payment",
-                Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
+                Text = "💰 Payment",
+                Font = new Font("Segoe UI", 8F, FontStyle.Bold),
                 ForeColor = Color.White,
                 BackColor = Color.Transparent,
                 Dock = DockStyle.Fill,
@@ -589,8 +667,8 @@ namespace POSAPP
             };
             _lblCreditSaleToggle = new Label
             {
-                Text = "🧾  Credit Sale",
-                Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
+                Text = "🧾 Credit",              // shortened — "Sale" is redundant next to "Payment"
+                Font = new Font("Segoe UI", 8F, FontStyle.Bold),
                 ForeColor = TextMuted,
                 BackColor = Color.Transparent,
                 Dock = DockStyle.Fill,
@@ -1490,8 +1568,9 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             foreach (var row in pending)
             {
                 try
-                {
-                    bool ok = await ProcessSaleStockAsync(row.ItemId, _companyId, row.Qty).ConfigureAwait(true);
+                {// in SyncOfflineStockUpdatesAsync — use the same refKey when re-queuing/re-sending
+                    string refKey = $"{row.PkId}-{row.ItemId}"; // or better: store InvoiceNo alongside the queue row
+                    bool ok = await ProcessSaleStockAsync(row.ItemId, _companyId, row.Qty, refKey).ConfigureAwait(true);
                     if (ok)
                     {
                         await MarkOfflineStockSyncedAsync(row.PkId).ConfigureAwait(true);
@@ -1934,18 +2013,18 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             }
             catch (Exception ex) { Debug.WriteLine("MarkOfflineSOInvoiceAttemptFailedAsync: " + ex.Message); }
         }
-        private void StartOfflineOrderSyncTimer()
-        {
-            if (_offlineOrderSyncTimer != null) return; // already running
+        //private void StartOfflineOrderSyncTimer()
+        //{
+        //    if (_offlineOrderSyncTimer != null) return; // already running
 
-            _offlineOrderSyncTimer = new System.Windows.Forms.Timer { Interval = OFFLINE_ORDER_SYNC_INTERVAL_MS };
-            _offlineOrderSyncTimer.Tick += async (s, e) => await SyncAllOfflineDataAsync().ConfigureAwait(true);
-            _offlineOrderSyncTimer.Start();
+        //    _offlineOrderSyncTimer = new System.Windows.Forms.Timer { Interval = OFFLINE_ORDER_SYNC_INTERVAL_MS };
+        //    _offlineOrderSyncTimer.Tick += async (s, e) => await SyncAllOfflineDataAsync().ConfigureAwait(true);
+        //    _offlineOrderSyncTimer.Start();
 
-            // Also try once shortly after startup, in case items were queued
-            // in a previous offline session.
-            _ = SyncAllOfflineDataAsync();
-        }
+        //    // Also try once shortly after startup, in case items were queued
+        //    // in a previous offline session.
+        //    _ = SyncAllOfflineDataAsync();
+        //}
 
         // ── Runs every offline queue in dependency order: Sales Orders first
         //    (so newly-created SOs exist before we try to invoice them), then
@@ -2007,28 +2086,18 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
 
                     var result = await SalesOrderApi.CreateSalesOrderAsync(payload).ConfigureAwait(true);
 
+                    // ============================================================
+                    // 2. SYNC OFFLINE SALES ORDERS
+                    //    DO NOT reduce stock here if the online sale already
+                    //    reduced it. Only sync the Sales Order.
+                    // ============================================================
+
                     if (result.Success)
                     {
-                        // Push stock reduction now that the order exists server-side —
-                        // and if THAT still fails, queue it too instead of dropping it.
-                        if (payload.Lines != null)
-                        {
-                            foreach (var line in payload.Lines)
-                            {
-                                if (line.ItemId > 0)
-                                {
-                                    decimal unitsPerPack = GetUnitsPerPackForItemUom(line.ItemId, line.UOM);
-                                    decimal baseQty = line.Qty * unitsPerPack;
+                        // Stock is reduced server-side by SalesOrderBL.CreateAsync when the SO
+                        // is created (called via SalesOrderApi.CreateSalesOrderAsync above).
+                        // Do NOT call ProcessSaleStockAsync here — that was double-reducing.
 
-                                    bool stockOk = await ProcessSaleStockAsync(line.ItemId, _companyId, baseQty).ConfigureAwait(true);
-                                    if (!stockOk)
-                                        await QueueOfflineStockUpdateAsync(line.ItemId, _companyId, baseQty).ConfigureAwait(true);
-                                }
-                            }
-                        }
-
-                        // This sale was completed (Confirm) but couldn't be invoiced at tender
-                        // time because the SO didn't exist yet — queue the invoice now that it does.
                         if (!string.IsNullOrWhiteSpace(result.SoNumber) &&
                             string.Equals(payload.Status, "Confirm", StringComparison.OrdinalIgnoreCase))
                         {
@@ -2040,7 +2109,11 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                     }
                     else
                     {
-                        await MarkOfflineOrderAttemptFailedAsync(row.PkId, "API returned failure").ConfigureAwait(true);
+                        await MarkOfflineOrderAttemptFailedAsync(
+                            row.PkId,
+                            "API returned failure"
+                        ).ConfigureAwait(true);
+
                         failed++;
                     }
                 }
@@ -2418,8 +2491,11 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 _stockCacheLoaded = true;
                 Debug.WriteLine($"LoadStockCacheAsync: {newCache.Count} stock rows cached (in-memory).");
 
-                // ── Persist to SQLite so offline mode survives an app restart ──
                 await SaveStockCacheToLocalAsync(newCache).ConfigureAwait(false);
+
+                // NEW — keep quick-add in sync with live stock
+                if (this.IsHandleCreated && !this.IsDisposed)
+                    this.BeginInvoke(new Action(BuildHotItems));
             }
             catch (Exception ex)
             {
@@ -2745,7 +2821,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                         if (payload?.Lines == null) continue;
                         foreach (var line in payload.Lines)
                             if (line.ItemId == itemId)
-                                total += line.Qty * GetUnitsPerPackForItemUom(line.ItemId, line.UOM);
+                                total += line.Qty;   // already base units — don't multiply again  // ← same bug
                     }
                     catch { /* skip malformed rows */ }
                 }
@@ -3918,7 +3994,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
         {
             try
             {
-                _companyName = "Eurotex";
+                _companyName = "EuroTex";
                 _companyAddress = "Address";
                 _companyPhone = "23456765432";
             }
@@ -3962,6 +4038,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                     StockCode = item.Barcode,
                     Name = item.Name,
                     Qty = item.Qty,
+                    UOM = item.UOMName,
                     UnitPrice = item.Price,
                     DiscountPct = item.DiscountPct,
                     LineTotal = item.Total
@@ -4484,13 +4561,18 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
 
             // Sort: top sellers first, then alphabetical
             var sorted = _catalog
-                .GroupBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
-                .Select(g => g.First())
-                .OrderByDescending(p =>
-                    _salesFrequency.TryGetValue(p.Name, out int freq) ? freq : 0)
-                .ThenBy(p => p.Name)
-                .Take(10)
-                .ToList();
+     .GroupBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
+     .Select(g => g.First())
+     .Where(p =>
+     {
+         var (onHand, reserved) = GetStoreStock(p.ItemId);
+         return Math.Max(0m, onHand - reserved) > 0m;   // ← only show items that actually have stock
+     })
+     .OrderByDescending(p =>
+         _salesFrequency.TryGetValue(p.Name, out int freq) ? freq : 0)
+     .ThenBy(p => p.Name)
+     .Take(10)
+     .ToList();
 
             // ── Layout constants ──────────────────────────────────────────────
             const int COLS = 4;
@@ -4854,45 +4936,16 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             }
 
             // Batch all StoreStock reads in ONE SQLite connection
+            // Batch stock lookups from the live in-memory cache (same source used for
+            // AddToCart / GetLiveAvailableStockAsync) instead of the stale legacy
+            // StoreStock SQLite table, which is no longer kept in sync.
             var stockMap = new Dictionary<string, (decimal onH, decimal rem)>(
                 StringComparer.OrdinalIgnoreCase);
-
-            if (System.IO.File.Exists(_dbPath))
+            foreach (var p in matches)
             {
-                try
-                {
-                    var ids = matches
-                        .Where(p => !string.IsNullOrWhiteSpace(p.Barcode))
-                        .Select(p => p.Barcode.Replace("'", "''"))
-                        .Distinct();
-
-                    string inList = string.Join(",", ids.Select(id => $"'{id}'"));
-
-                    if (!string.IsNullOrEmpty(inList))
-                    {
-                        using var conn = new System.Data.SQLite.SQLiteConnection(
-                            $"Data Source={_dbPath};Version=3;");
-                        conn.Open();
-                        using var cmd = conn.CreateCommand();
-                        cmd.CommandText =
-                            $"SELECT ItemID, OnHandQty, IFNULL(ReservedQty,0) " +
-                            $"FROM StoreStock " +
-                            $"WHERE ItemID IN ({inList}) AND StoreID = @store;";
-                        cmd.Parameters.AddWithValue("@store", _storeId);
-                        using var rdr = cmd.ExecuteReader();
-                        while (rdr.Read())
-                        {
-                            string id = rdr.IsDBNull(0) ? "" : Convert.ToString(rdr.GetValue(0)) ?? "";
-                            decimal onH = rdr.IsDBNull(1) ? 0m : Convert.ToDecimal(rdr.GetValue(1));
-                            decimal res = rdr.IsDBNull(2) ? 0m : Convert.ToDecimal(rdr.GetValue(2));
-                            stockMap[id] = (onH, Math.Max(0m, onH - res));
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine("RunProductSearch stock: " + ex.Message);
-                }
+                if (string.IsNullOrWhiteSpace(p.Barcode)) continue;
+                var (onHand, reserved) = GetStoreStock(p.ItemId);
+                stockMap[p.Barcode] = (onHand, Math.Max(0m, onHand - reserved));
             }
 
             // Build display strings — no ItemID suffix to keep rows narrow
@@ -5900,6 +5953,8 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 return;
             }
 
+            bool cartWasEmpty = _cart.Count == 0;   // ← NEW: capture before mutating cart
+
             var availUoms = (prod.AvailableUOMs != null && prod.AvailableUOMs.Count > 0)
                 ? prod.AvailableUOMs
                 : _uomMaster;
@@ -5908,7 +5963,6 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 ? uomId.Value
                 : (availUoms.Count > 0 ? availUoms[0].UomId : (prod.UOM > 0 ? prod.UOM : 1));
 
-            // ── NEW: convert pack quantity to base units before comparing to stock ──
             decimal unitsPerPack = availUoms.FirstOrDefault(u => u.UomId == resolvedUom)?.UnitsPerPack ?? 1m;
             if (unitsPerPack <= 0) unitsPerPack = 1m;
 
@@ -5916,8 +5970,8 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                                    && c.UOM == resolvedUom
                                    && c.Barcode == prod.Barcode);
             decimal currentQtyInCart = ex?.Qty ?? 0m;
-            decimal requestedTotalQty = currentQtyInCart + qty;               // in pack units
-            decimal requestedTotalBaseQty = requestedTotalQty * unitsPerPack; // in base units
+            decimal requestedTotalQty = currentQtyInCart + qty;
+            decimal requestedTotalBaseQty = requestedTotalQty * unitsPerPack;
             decimal available = await GetLiveAvailableStockAsync(
                 prod.ItemId, excludeCartItemName: prod.Name, excludeUom: resolvedUom).ConfigureAwait(true);
 
@@ -5962,7 +6016,11 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
 
             RefreshCart();
             UpdateTotals();
-        }
+
+            // NEW: warn immediately when the cashier starts a sale with low float
+            if (cartWasEmpty && ShiftState.IsOpen && ShiftState.CurrentFloat < 50)
+                ShowStatus($"⚠ Float low: {Fmt(ShiftState.CurrentFloat)} — open Float Entry (F8).", false);
+        }   // ← end of AddToCart — the float check above must be inside this closing brace
 
         private void RefreshCart()
         {
@@ -7191,9 +7249,9 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 return;
             }
 
-            decimal totalBaseUnits = _cart.Sum(i => i.Qty * GetUnitsPerPackForCartItem(i));
+            decimal totalQty = _cart.Sum(i => i.Qty * GetUnitsPerPackForCartItem(i));
 
-            lblStockReduction.Text = $"📉 Stock to reduce: {totalBaseUnits:F0} unit(s) across {_cart.Count} line(s)";
+            lblStockReduction.Text = $"📉 Stock to reduce: {totalQty:F0} unit(s) across {_cart.Count} line(s)";
             lblStockReduction.ForeColor = AccOrange;
         }
         // ── Shows remaining amount due (or change/paid state) in the big centre banner ──
@@ -7294,8 +7352,10 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             if (keyData == Keys.Escape) { this.Close(); return true; }
             if (keyData == Keys.F1)
             {
-                if (btnTenderSale != null && btnTenderSale.Enabled)
-                    btnTenderSale_Click(null, null);
+                // Always forward to the click handler — it has its own guards
+                // (empty cart, already-processing) and will show status messages
+                // if it can't proceed. Don't silently swallow F1 here.
+                btnTenderSale_Click(null, null);
                 return true;
             }
             if (keyData == Keys.F5) { txtSearch.Focus(); return true; }
@@ -7587,10 +7647,16 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
 
                     int resolvedUom = item.UOM > 0 ? item.UOM : 1;
 
+                    // ── FIX: convert the cart's pack-level Qty into base units using this
+                    //    item's UnitsPerPack for the chosen UOM — mirrors how qtyToReduce is
+                    //    computed for stock, and how GetQueuedOfflineQtyForItem reads it back. ──
+                    decimal unitsPerPack = GetUnitsPerPackForCartItem(item);
+                    decimal qtyInBaseUnits = item.Qty * unitsPerPack;
+
                     lines.Add(new CreateSOLinePayload
                     {
                         ItemId = itemId,
-                        Qty = item.Qty,
+                        Qty = qtyInBaseUnits,          // ← was: item.Qty
                         UOM = resolvedUom,
                         UnitPrice = item.Price,
                         DiscountPercent = item.DiscountPct,
@@ -7636,6 +7702,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                     DeliveryAddress = string.IsNullOrWhiteSpace(_customerAddressValue) ? "N/A" : _customerAddressValue,
                     DeliveryDate = DateTime.Now,
                     Status = "Confirm",
+                    WinPos="Y",
                     Lines = lines,
                     Charges = new List<CreateSOChargePayload>()
                 };
@@ -7670,7 +7737,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             Timeout = TimeSpan.FromSeconds(60) // adjust as needed
         };
 
-        private async Task<bool> ProcessSaleStockAsync(int itemId, int companyId, decimal saleQty)
+        private async Task<bool> ProcessSaleStockAsync(int itemId, int companyId, decimal saleQty, string refKey)
         {
             try
             {
@@ -7678,7 +7745,8 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 {
                     ItemID = itemId,
                     CompanyID = companyId,
-                    SaleQty = saleQty
+                    SaleQty = saleQty,
+                    RequestRef = refKey   // NEW — stable per invoice+line
                 };
 
                 string json = JsonSerializer.Serialize(payload);
@@ -8258,11 +8326,16 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
         {
             if (_cart.Count == 0) { ShowStatus("Cart is empty.", false); return; }
 
-            // ── Freeze the button immediately to prevent double-submits ─────────
-            if (btnTenderSale == null || !btnTenderSale.Enabled) return; // already processing
-            btnTenderSale.Enabled = false;
-            string originalBtnText = btnTenderSale.Text;
-            btnTenderSale.Text = "⏳  Processing…";
+            if (_isTendering)
+            {
+                ShowStatus("⏳ Still processing the previous sale — please wait.", false);
+                return;
+            }
+            _isTendering = true;
+
+            if (btnTenderSale != null) btnTenderSale.Enabled = false;
+            string originalBtnText = btnTenderSale?.Text ?? "✅  Tender Sale  (F1)";
+            if (btnTenderSale != null) btnTenderSale.Text = "⏳  Processing…";
             this.Cursor = Cursors.WaitCursor;
 
             try
@@ -8350,37 +8423,55 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 }
                 else
                 {
-                    var failedStockItems = new List<string>();
-                    var queuedStockItems = new List<string>();
-                    foreach (var item in _cart)
-                    {
-                        if (item.ItemId <= 0)
-                        {
-                            failedStockItems.Add($"{item.Name} (item id not resolved)");
-                            continue;
-                        }
+                //    var failedStockItems = new List<string>();
+                //    var queuedStockItems = new List<string>();
+                //    foreach (var item in _cart)
+                //    {
+                //        if (item.ItemId <= 0)
+                //        {
+                //            failedStockItems.Add($"{item.Name} (item id not resolved)");
+                //            continue;
+                //        }
 
-                        // Convert to base units before touching stock — same as PO's upsertOpeningStock logic.
-                        decimal unitsPerPack = GetUnitsPerPackForCartItem(item);
-                        decimal baseQty = item.Qty * unitsPerPack;
+                //        // Reduce by qty × pack size of the sold UOM (e.g. 2 Cases of 12 = 24 units reduced).
+                //        decimal unitsPerPack = GetUnitsPerPackForCartItem(item);
+                //        decimal qtyToReduce = item.Qty * unitsPerPack;
 
-                        bool ok = await ProcessSaleStockAsync(item.ItemId, _companyId, baseQty).ConfigureAwait(true);
-                        if (!ok)
-                        {
-                            bool queued = await QueueOfflineStockUpdateAsync(item.ItemId, _companyId, baseQty).ConfigureAwait(true);
-                            if (queued) queuedStockItems.Add(item.Name);
-                            else failedStockItems.Add(item.Name);
-                        }
-                    }
+                //        // in btnTenderSale_Click loop
+                //        // ============================================================
+                //        // 1. ONLINE SALE - replace your existing stock-processing block
+                //        // ============================================================
 
-                    if (queuedStockItems.Count > 0)
-                        Debug.WriteLine("Stock updates queued for auto-sync: " + string.Join(", ", queuedStockItems));
+                //        string refKey = $"{invNo}-{item.ItemId}";
 
-                    if (failedStockItems.Count > 0)
-                    {
-                        ShowStatus("⚠ Stock NOT reduced on server for: " + string.Join(", ", failedStockItems), false);
-                        Debug.WriteLine("Stock reduction failures: " + string.Join(", ", failedStockItems));
-                    }
+                //        bool ok = await ProcessSaleStockAsync(
+                //            item.ItemId,
+                //            _companyId,
+                //            qtyToReduce,
+                //            refKey);
+
+                //        if (!ok)
+                //        {
+                //            bool queued = await QueueOfflineStockUpdateAsync(
+                //                item.ItemId,
+                //                _companyId,
+                //                qtyToReduce);
+
+                //            if (queued)
+                //                queuedStockItems.Add(item.Name);
+                //            else
+                //                failedStockItems.Add(item.Name);
+                //        }
+                //    }
+
+                //    if (queuedStockItems.Count > 0)
+                //        Debug.WriteLine("Stock updates queued for auto-sync: " + string.Join(", ", queuedStockItems));
+
+                //    if (failedStockItems.Count > 0)
+                //    {
+                //        ShowStatus("⚠ Stock NOT reduced on server for: " + string.Join(", ", failedStockItems), false);
+                //        Debug.WriteLine("Stock reduction failures: " + string.Join(", ", failedStockItems));
+                //    }
                 }
 
                 try
@@ -8401,7 +8492,28 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
 
                 if (soResult.Success && !_lastOrderQueuedOffline && !string.IsNullOrWhiteSpace(soResult.SoNumber) && hasOutOfStockItems)
                 {
-                    // Out-of-stock sale — Sales Order posted, invoice deliberately withheld.
+                    // Only reduce manually here if the SO for out-of-stock sales is created
+                    // WITHOUT triggering the server-side reduction (e.g. different Status).
+                    // If it's created as "Confirm" like a normal sale, remove this block too —
+                    // the server already handled it and this would double-reduce.
+                    var failedStockItems = new List<string>();
+                    var queuedStockItems = new List<string>();
+                    foreach (var item in _cart)
+                    {
+                        if (item.ItemId <= 0) { failedStockItems.Add($"{item.Name} (item id not resolved)"); continue; }
+                        decimal unitsPerPack = GetUnitsPerPackForCartItem(item);
+                        decimal qtyToReduce = item.Qty * unitsPerPack;
+                        string refKey = $"{invNo}-{item.ItemId}";
+                        bool ok = await ProcessSaleStockAsync(item.ItemId, _companyId, qtyToReduce, refKey).ConfigureAwait(true);
+                        if (!ok)
+                        {
+                            bool queued = await QueueOfflineStockUpdateAsync(item.ItemId, _companyId, qtyToReduce).ConfigureAwait(true);
+                            if (queued) queuedStockItems.Add(item.Name); else failedStockItems.Add(item.Name);
+                        }
+                    }
+                    if (failedStockItems.Count > 0)
+                        ShowStatus("⚠ Stock NOT reduced on server for: " + string.Join(", ", failedStockItems), false);
+
                     ShowStatus($"📦 Sales Order {soResult.SoNumber} saved — invoice withheld (insufficient stock).", true);
                     try { SalesRepository.MarkInvoicePaid(originalPendingNo); } catch { }
                     try { SalesRepository.MarkInvoicePaid(invNo); } catch { }
@@ -8560,14 +8672,15 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             }
             finally
             {
-                // ── Always restore the button, even on early return/exception ───────
                 this.Cursor = Cursors.Default;
+                _isTendering = false;
                 if (btnTenderSale != null && !btnTenderSale.IsDisposed)
                 {
                     btnTenderSale.Enabled = true;
                     btnTenderSale.Text = originalBtnText;
                 }
             }
+
         }
 
 
@@ -9109,11 +9222,28 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             btnMax.Location = new Point(w - 92, 0);
             btnMin.Location = new Point(w - 138, 0);
 
-            // Also shorten the shortcut label so it never reaches the buttons
             if (lblShortcuts != null)
             {
                 int maxLblRight = btnMin.Left - 10;
                 lblShortcuts.MaximumSize = new Size(Math.Max(100, maxLblRight - lblShortcuts.Left), 20);
+            }
+
+            // ── NEW: keep the barcode box anchored to the title buttons, and let
+            //    the search box fill the space between it and the invoice number ──
+            int rightEdge = btnMin.Left - 20;
+            if (txtBarcode != null)
+            {
+                txtBarcode.Location = new Point(rightEdge - txtBarcode.Width, 10);
+                if (lblBarcodeHeader != null)
+                    lblBarcodeHeader.Location = new Point(txtBarcode.Left - 16, 12);
+                if (lblBarcodeSep != null)
+                    lblBarcodeSep.Location = new Point(txtBarcode.Left - 34, 10);
+            }
+
+            if (txtSearch != null && lblBarcodeSep != null)
+            {
+                int searchRight = lblBarcodeSep.Left - 10;
+                txtSearch.Width = Math.Max(200, searchRight - txtSearch.Left);
             }
         }
 
