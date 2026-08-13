@@ -732,7 +732,7 @@ namespace POSAPP.Invoice
 
                 string raw = result.ToString();
 
-                if (DateTime.TryParseExact(
+                if (DateTime.TryParseExact( 
                         raw,
                         "yyyy-MM-dd HH.mm.ss",
                         CultureInfo.InvariantCulture,
