@@ -310,7 +310,7 @@ namespace POSAPP
             btnCancelSale.Cursor = Cursors.Hand;
             btnCancelSale.Click += new EventHandler(btnCancelSale_Click);
 
-            lblShortcuts.Text = "F1=Tender  F2=Cash  F3=Digital  F4=Card  F5=Search  F6=Barcode  F7=Fill  ESC=Close";
+            lblShortcuts.Text = " ";
             lblShortcuts.Font = new Font("Segoe UI", 8F);
             lblShortcuts.ForeColor = Color.FromArgb(100, 110, 130);
             lblShortcuts.BackColor = Color.Transparent;

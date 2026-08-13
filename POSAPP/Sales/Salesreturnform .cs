@@ -584,9 +584,9 @@ namespace POSAPP.Sales
 
                 card.Controls.AddRange(new Control[] { lblNo, lblDate, lblLines });
                 var entryRef = entry;
-                EventHandler clickHandler = (s, e) => SelectInvoice(entryRef);
-                card.Click += clickHandler;
-                foreach (Control child in card.Controls) child.Click += clickHandler;
+                //EventHandler clickHandler = (s, e) => SelectInvoice(entryRef);
+                //card.Click += clickHandler;
+                //foreach (Control child in card.Controls) child.Click += clickHandler;
 
                 panelInvoiceCards.Controls.Add(card);
 
@@ -653,58 +653,58 @@ namespace POSAPP.Sales
             panelContent.Controls.Add(_cardInvoiceLines);
         }
 
-        private void SelectInvoice(InvoiceWithLines entry)
-        {
-            var inv = entry.Header;
-            _currentInvoiceNo = inv.InvoiceNo;
-            RebuildInvoiceCards();
+        //private void SelectInvoice(InvoiceWithLines entry)
+        //{
+        //    var inv = entry.Header;
+        //    _currentInvoiceNo = inv.InvoiceNo;
+        //    RebuildInvoiceCards();
 
-            // NEW — pull qty already returned against this invoice so lines that
-            // were returned in a PREVIOUS transaction don't show up as freshly
-            // returnable again.
-            var returnedQtys = SalesReturnRepository.GetReturnedQtys(inv.InvoiceNo);
+        //    // NEW — pull qty already returned against this invoice so lines that
+        //    // were returned in a PREVIOUS transaction don't show up as freshly
+        //    // returnable again.
+        //    var returnedQtys = SalesReturnRepository.GetReturnedQtys(inv.InvoiceNo);
 
-            _currentInvoiceLines = new List<InvoiceLineCandidate>();
-            foreach (var r in entry.Lines)
-            {
-                int already = 0;
-                string key = !string.IsNullOrWhiteSpace(r.Barcode) ? r.Barcode.Trim() : r.ItemName?.Trim();
-                if (!string.IsNullOrWhiteSpace(key) && returnedQtys.TryGetValue(key, out int rq))
-                    already = rq;
+        //    _currentInvoiceLines = new List<InvoiceLineCandidate>();
+        //    foreach (var r in entry.Lines)
+        //    {
+        //        int already = 0;
+        //        string key = !string.IsNullOrWhiteSpace(r.Barcode) ? r.Barcode.Trim() : r.ItemName?.Trim();
+        //        if (!string.IsNullOrWhiteSpace(key) && returnedQtys.TryGetValue(key, out int rq))
+        //            already = rq;
 
-                var candidate = new InvoiceLineCandidate
-                {
-                    ItemName = r.ItemName,
-                    UnitPrice = r.UnitPrice,
-                    DiscountPct = r.DiscountPct,
-                    TaxPct = r.TaxPct,
-                    UOM = string.IsNullOrWhiteSpace(r.UOM) ? "EA" : r.UOM,
-                    Barcode = r.Barcode,
-                    PurchasedQty = r.Qty,
-                    AlreadyReturnedQty = already,     // was: 0
-                    ReturnQty = 0
-                };
+        //        var candidate = new InvoiceLineCandidate
+        //        {
+        //            ItemName = r.ItemName,
+        //            UnitPrice = r.UnitPrice,
+        //            DiscountPct = r.DiscountPct,
+        //            TaxPct = r.TaxPct,
+        //            UOM = string.IsNullOrWhiteSpace(r.UOM) ? "EA" : r.UOM,
+        //            Barcode = r.Barcode,
+        //            PurchasedQty = r.Qty,
+        //            AlreadyReturnedQty = already,     // was: 0
+        //            ReturnQty = 0
+        //        };
 
-                candidate.Added = _cartLines.Any(cl =>
-                    string.Equals(cl.SourceInvoiceNo, inv.InvoiceNo, StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(cl.Name, candidate.ItemName, StringComparison.OrdinalIgnoreCase));
+        //        candidate.Added = _cartLines.Any(cl =>
+        //            string.Equals(cl.SourceInvoiceNo, inv.InvoiceNo, StringComparison.OrdinalIgnoreCase) &&
+        //            string.Equals(cl.Name, candidate.ItemName, StringComparison.OrdinalIgnoreCase));
 
-                // Skip lines with nothing left to return, unless it's already sitting
-                // in the current cart (keep the "✓ Added" row visible in that case).
-                if (candidate.MaxReturnable > 0 || candidate.Added)
-                    _currentInvoiceLines.Add(candidate);
-            }
+        //        // Skip lines with nothing left to return, unless it's already sitting
+        //        // in the current cart (keep the "✓ Added" row visible in that case).
+        //        if (candidate.MaxReturnable > 0 || candidate.Added)
+        //            _currentInvoiceLines.Add(candidate);
+        //    }
 
-            lblCurrentInvoiceHead.Text = $"Invoice Items — {inv.InvoiceNo}";
-            RebuildInvoiceLineRows();
-            _cardInvoiceLines.Visible = _currentInvoiceLines.Count > 0;
-            if (_currentInvoiceLines.Count == 0)
-                ShowStatus($"Invoice {inv.InvoiceNo} has no returnable items left.", false);
-            else
-                ShowStatus($"Set a Return Qty and click Add for each item you want to return from {inv.InvoiceNo}.", true);
+        //    lblCurrentInvoiceHead.Text = $"Invoice Items — {inv.InvoiceNo}";
+        //    RebuildInvoiceLineRows();
+        //    _cardInvoiceLines.Visible = _currentInvoiceLines.Count > 0;
+        //    if (_currentInvoiceLines.Count == 0)
+        //        ShowStatus($"Invoice {inv.InvoiceNo} has no returnable items left.", false);
+        //    else
+        //        ShowStatus($"Set a Return Qty and click Add for each item you want to return from {inv.InvoiceNo}.", true);
 
-            RelayoutCards();
-        }
+        //    RelayoutCards();
+        //}
 
         private void RebuildInvoiceLineRows()
         {

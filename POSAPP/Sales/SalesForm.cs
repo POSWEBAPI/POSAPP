@@ -127,7 +127,7 @@ namespace POSAPP
         // true  = load from D365 API  |  false = load from local API / SQLite
         internal bool _useD365;
         private bool _isD365Mode = false;
-
+        private System.Windows.Forms.Timer _resizeDebounce;
         // ── Pending invoice mode ───────────────────────────────────────────────
         // When true: payment restricted to Cash / Card / Bank Transfer only
         internal bool _isPendingInvoiceMode = false;
@@ -372,21 +372,24 @@ namespace POSAPP
                 int hotH = Math.Max(180, (int)(availH * 0.55));
                 panelHotCard.Height = hotH;
             };
-            System.Windows.Forms.Timer resizeDebounce = null;
             this.Resize += (s, e) =>
             {
-                resizeDebounce?.Stop();
-                resizeDebounce?.Dispose();
-                resizeDebounce = new System.Windows.Forms.Timer { Interval = 150 };
-                resizeDebounce.Tick += (ts, te) =>
+                _resizeDebounce?.Stop();
+                _resizeDebounce?.Dispose();
+                _resizeDebounce = new System.Windows.Forms.Timer { Interval = 150 };
+                _resizeDebounce.Tick += (ts, te) =>
                 {
-                    resizeDebounce.Stop();
-                    resizeDebounce.Dispose();
+                    _resizeDebounce.Stop();
+                    _resizeDebounce.Dispose();
+                    _resizeDebounce = null;
+
+                    if (this.IsDisposed || !this.IsHandleCreated) return;
+
                     RepositionTitleButtons();
                     RepositionDropdown();
                     RepositionSearchResults();
                 };
-                resizeDebounce.Start();
+                _resizeDebounce.Start();
             };
             this.KeyPreview = true;
             btnMax_Click(sender, e);
@@ -4429,31 +4432,46 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
 
         private void RepositionDropdown()
         {
-            if (_customerDropdown == null || _customerWrapper == null) return;
-            Point screenPt = _customerWrapper.PointToScreen(new Point(0, _customerWrapper.Height + 2));
-            Point formPt = this.PointToClient(screenPt);
-            _customerDropdown.Location = formPt;
-            _customerDropdown.Width = _customerWrapper.Width;
-            if (_customerDropdown.Height > 0)
-                _customerDropdown.Region = MakeRoundedRegion(
-                    new Size(_customerDropdown.Width, _customerDropdown.Height), 8);
+            if (_customerDropdown == null || _customerDropdown.IsDisposed) return;
+            if (_customerWrapper == null || _customerWrapper.IsDisposed) return;
+            if (this.IsDisposed || !this.IsHandleCreated) return;
+
+            try
+            {
+                Point screenPt = _customerWrapper.PointToScreen(new Point(0, _customerWrapper.Height + 2));
+                Point formPt = this.PointToClient(screenPt);
+                _customerDropdown.Location = formPt;
+                _customerDropdown.Width = _customerWrapper.Width;
+                if (_customerDropdown.Height > 0)
+                    _customerDropdown.Region = MakeRoundedRegion(
+                        new Size(_customerDropdown.Width, _customerDropdown.Height), 8);
+            }
+            catch (ObjectDisposedException)
+            {
+                // Controls were torn down mid-resize (e.g. right before close) — safe to ignore.
+            }
         }
         private void RepositionSearchResults()
         {
-            if (_searchWrapper == null || listSearchResults == null) return;
+            if (_searchWrapper == null || _searchWrapper.IsDisposed) return;
+            if (listSearchResults == null || listSearchResults.IsDisposed) return;
+            if (this.IsDisposed || !this.IsHandleCreated) return;
 
-            Point screenPt = _searchWrapper.PointToScreen(new Point(0, _searchWrapper.Height + 2));
-            Point formPt = this.PointToClient(screenPt);
+            try
+            {
+                Point screenPt = _searchWrapper.PointToScreen(new Point(0, _searchWrapper.Height + 2));
+                Point formPt = this.PointToClient(screenPt);
 
-            int w = _searchWrapper.Width;
-            int x = Math.Max(0, formPt.X);
+                int w = _searchWrapper.Width;
+                int x = Math.Max(0, formPt.X);
 
-            // Clamp right edge inside the form
-            if (x + w > this.ClientSize.Width - 4)
-                w = this.ClientSize.Width - 4 - x;
+                if (x + w > this.ClientSize.Width - 4)
+                    w = this.ClientSize.Width - 4 - x;
 
-            listSearchResults.Location = new Point(x, formPt.Y);
-            listSearchResults.Width = w;
+                listSearchResults.Location = new Point(x, formPt.Y);
+                listSearchResults.Width = w;
+            }
+            catch (ObjectDisposedException) { }
         }
 
         private async void TxtCustomer_TextChanged(object sender, EventArgs e)
@@ -6103,7 +6121,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             var captured = item;
             btnMinus.Click += (s, e) =>
             {
-                if (captured.Qty > 1) { captured.Qty--; RefreshCart(); UpdateTotals(); }
+                if (captured.Qty > 1) ShowQtyReduceAuthDialog(captured);
                 else ShowDeleteAuthDialog(captured);
             };
             btnPlus.Click += async (s, e) =>
@@ -6781,6 +6799,282 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             dlg.ShowDialog(this);
         }
 
+        // ══════════════════════════════════════════════════════════════════════
+        //  QUANTITY REDUCE — WITH TIERED AUTH (fires on every − click, not just
+        //  when the item would be fully removed)
+        // ══════════════════════════════════════════════════════════════════════
+        private async void ShowQtyReduceAuthDialog(CartItem item)
+        {
+            string currentUserRole = await GetCurrentUserRoleAsync().ConfigureAwait(true);
+            bool isCashier = string.IsNullOrEmpty(currentUserRole)
+                             || currentUserRole.Equals("Cashier", StringComparison.OrdinalIgnoreCase)
+                             || (!currentUserRole.Equals("Supervisor", StringComparison.OrdinalIgnoreCase)
+                              && !currentUserRole.Equals("StoreManager", StringComparison.OrdinalIgnoreCase)
+                              && !currentUserRole.Equals("Store Manager", StringComparison.OrdinalIgnoreCase));
+
+            string requiredRoleDisplay = isCashier ? "Supervisor or Store Manager" : "Store Manager";
+
+            var dlg = new Form
+            {
+                FormBorderStyle = FormBorderStyle.None,
+                StartPosition = FormStartPosition.CenterParent,
+                BackColor = Color.FromArgb(28, 32, 42),
+                ClientSize = new Size(420, 340),
+                KeyPreview = true,
+                ShowInTaskbar = false
+            };
+            dlg.Region = MakeRoundedRegion(dlg.Size, 12);
+
+            var pnlHead = new Panel
+            {
+                BackColor = Color.FromArgb(42, 46, 58),
+                Size = new Size(420, 50),
+                Location = Point.Empty
+            };
+            pnlHead.Controls.Add(new Label
+            {
+                Text = $"🔒  {requiredRoleDisplay} Authorisation Required",
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+                ForeColor = TextWhite,
+                BackColor = Color.Transparent,
+                AutoSize = false,
+                Size = new Size(400, 50),
+                Location = new Point(10, 0),
+                TextAlign = ContentAlignment.MiddleLeft
+            });
+
+            var lblItem = new Label
+            {
+                Text = $"Reducing: {item.Name}   {item.Qty} → {item.Qty - 1}",
+                Font = new Font("Segoe UI", 9.5F),
+                ForeColor = TextMuted,
+                BackColor = Color.Transparent,
+                AutoSize = false,
+                Size = new Size(380, 24),
+                Location = new Point(20, 62),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+
+            var lblRoleBadge = new Label
+            {
+                Text = $"⚠  Requires: {requiredRoleDisplay}",
+                Font = new Font("Segoe UI", 8F, FontStyle.Bold),
+                ForeColor = AccOrange,
+                BackColor = Color.FromArgb(50, 38, 18),
+                AutoSize = false,
+                Size = new Size(380, 24),
+                Location = new Point(20, 88),
+                TextAlign = ContentAlignment.MiddleLeft,
+                Padding = new Padding(6, 0, 0, 0)
+            };
+
+            var lblUser = new Label
+            {
+                Text = "Username",
+                Font = new Font("Segoe UI", 8.5F),
+                ForeColor = TextMuted,
+                BackColor = Color.Transparent,
+                AutoSize = true,
+                Location = new Point(20, 122)
+            };
+            var txtUser = new TextBox
+            {
+                Font = new Font("Segoe UI", 10.5F),
+                ForeColor = TextWhite,
+                BackColor = Color.FromArgb(38, 42, 54),
+                BorderStyle = BorderStyle.FixedSingle,
+                Size = new Size(380, 30),
+                Location = new Point(20, 142)
+            };
+            var lblPass = new Label
+            {
+                Text = "Password",
+                Font = new Font("Segoe UI", 8.5F),
+                ForeColor = TextMuted,
+                BackColor = Color.Transparent,
+                AutoSize = true,
+                Location = new Point(20, 182)
+            };
+            var txtPass = new TextBox
+            {
+                Font = new Font("Segoe UI", 10.5F),
+                ForeColor = TextWhite,
+                BackColor = Color.FromArgb(38, 42, 54),
+                BorderStyle = BorderStyle.FixedSingle,
+                Size = new Size(380, 30),
+                Location = new Point(20, 202),
+                UseSystemPasswordChar = true
+            };
+            var lblAuthStatus = new Label
+            {
+                Font = new Font("Segoe UI", 8.5F, FontStyle.Italic),
+                ForeColor = AccRed,
+                BackColor = Color.Transparent,
+                AutoSize = false,
+                Size = new Size(380, 20),
+                Location = new Point(20, 242)
+            };
+
+            var btnAuth = new Button
+            {
+                Text = "✓  Authorise & Reduce",
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+                ForeColor = Color.White,
+                BackColor = AccRed,
+                FlatStyle = FlatStyle.Flat,
+                Size = new Size(220, 40),
+                Location = new Point(20, 270),
+                Cursor = Cursors.Hand
+            };
+            btnAuth.FlatAppearance.BorderSize = 0;
+            btnAuth.Region = MakeRoundedRegion(btnAuth.Size, 8);
+
+            var btnCancel = new Button
+            {
+                Text = "Cancel",
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+                ForeColor = TextMuted,
+                BackColor = Color.FromArgb(44, 48, 60),
+                FlatStyle = FlatStyle.Flat,
+                Size = new Size(150, 40),
+                Location = new Point(250, 270),
+                Cursor = Cursors.Hand
+            };
+            btnCancel.FlatAppearance.BorderSize = 0;
+            btnCancel.Region = MakeRoundedRegion(btnCancel.Size, 8);
+            btnCancel.Click += (s, e) => dlg.Close();
+
+            async void DoAuth()
+            {
+                string username = txtUser.Text.Trim();
+                string password = txtPass.Text;
+
+                if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
+                {
+                    lblAuthStatus.Text = "Username and password are required.";
+                    lblAuthStatus.ForeColor = AccRed;
+                    return;
+                }
+
+                btnAuth.Enabled = false;
+                lblAuthStatus.ForeColor = TextMuted;
+                lblAuthStatus.Text = "Verifying…";
+
+                try
+                {
+                    bool authorized = false;
+                    bool hasPermission = false;
+                    string role = "";
+
+                    try
+                    {
+                        var api = new ApiService();
+                        string json = await api.GetAsync(
+                            $"api/POSPermission/authorize-price-override?username={username}&password={password}")
+                            .ConfigureAwait(true);
+
+                        if (!string.IsNullOrEmpty(json))
+                        {
+                            var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                            using var doc = JsonDocument.Parse(json);
+                            var dataKind = doc.RootElement.GetProperty("data").ValueKind;
+
+                            if (dataKind == JsonValueKind.Object)
+                            {
+                                var resultWithRole = JsonSerializer.Deserialize<ApiResponse<AuthRoleDto>>(json, opts);
+                                if (resultWithRole?.IsSuccess == true && resultWithRole.Data != null
+                                    && !string.IsNullOrWhiteSpace(resultWithRole.Data.Role))
+                                {
+                                    authorized = true;
+                                    role = resultWithRole.Data.Role.Trim();
+                                }
+                            }
+                            else if (dataKind == JsonValueKind.True || dataKind == JsonValueKind.False)
+                            {
+                                var resultBool = JsonSerializer.Deserialize<ApiResponse<bool>>(json, opts);
+                                if (resultBool?.IsSuccess == true && resultBool.Data)
+                                    authorized = true;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine("API Auth: " + ex.Message);
+                        lblAuthStatus.ForeColor = AccRed;
+                        lblAuthStatus.Text = "⛔  Could not reach server. Check connection.";
+                        return;
+                    }
+
+                    if (authorized && string.IsNullOrWhiteSpace(role))
+                        role = await GetRoleFromApiAsync(username).ConfigureAwait(true);
+
+                    if (!authorized)
+                    {
+                        lblAuthStatus.ForeColor = AccRed;
+                        lblAuthStatus.Text = "⛔  Invalid username or password.";
+                        return;
+                    }
+
+                    bool isSupervisor = role.Equals("Supervisor", StringComparison.OrdinalIgnoreCase);
+                    bool isStoreManager = role.Equals("StoreManager", StringComparison.OrdinalIgnoreCase)
+                                       || role.Equals("Store Manager", StringComparison.OrdinalIgnoreCase);
+
+                    if (isCashier)
+                    {
+                        hasPermission = isSupervisor || isStoreManager;
+                        if (!hasPermission)
+                        {
+                            lblAuthStatus.ForeColor = AccRed;
+                            lblAuthStatus.Text = $"⛔  Role '{role}' cannot authorise quantity reduction.";
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        hasPermission = isStoreManager;
+                        if (!hasPermission)
+                        {
+                            lblAuthStatus.ForeColor = AccRed;
+                            lblAuthStatus.Text = isSupervisor
+                                ? "⛔  Supervisors need Store Manager approval to reduce quantity."
+                                : $"⛔  Role '{role}' cannot authorise this reduction.";
+                            return;
+                        }
+                    }
+
+                    lblAuthStatus.ForeColor = TextGreen;
+                    lblAuthStatus.Text = $"✓  Authorised as {role}";
+                    await Task.Delay(400);
+                    dlg.Close();
+
+                    item.Qty--;
+                    RefreshCart();
+                    UpdateTotals();
+                    ShowStatus($"✓ Quantity reduced — authorised by {username} ({role}).", true);
+                }
+                catch (Exception ex)
+                {
+                    lblAuthStatus.ForeColor = AccRed;
+                    lblAuthStatus.Text = "Error: " + ex.Message;
+                }
+                finally { btnAuth.Enabled = true; }
+            }
+
+            btnAuth.Click += (s, e) => DoAuth();
+            dlg.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Enter) { e.Handled = true; DoAuth(); }
+                if (e.KeyCode == Keys.Escape) { e.Handled = true; dlg.Close(); }
+            };
+            dlg.Controls.AddRange(new Control[]
+            {
+        pnlHead, lblItem, lblRoleBadge,
+        lblUser, txtUser, lblPass, txtPass,
+        lblAuthStatus, btnAuth, btnCancel
+            });
+            dlg.Shown += (s, e) => txtUser.Focus();
+            dlg.ShowDialog(this);
+        }
         // ══════════════════════════════════════════════════════════════════════
         //  Shared helper: resolve role by username via API
         // ══════════════════════════════════════════════════════════════════════
@@ -8714,6 +9008,9 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             _productSyncTimer?.Stop(); _productSyncTimer?.Dispose();
             _offlineOrderSyncTimer?.Stop(); _offlineOrderSyncTimer?.Dispose();
             _stockSyncTimer?.Stop(); _stockSyncTimer?.Dispose();
+            _resizeDebounce?.Stop();
+            _resizeDebounce?.Dispose();
+            _resizeDebounce = null;
         }
         private void ShowReprintDialog()
         {
@@ -9217,34 +9514,39 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
 
         private void RepositionTitleButtons()
         {
-            int w = panelHeader.Width;
-            btnClose.Location = new Point(w - 46, 0);
-            btnMax.Location = new Point(w - 92, 0);
-            btnMin.Location = new Point(w - 138, 0);
+            if (panelHeader == null || panelHeader.IsDisposed) return;
+            if (this.IsDisposed || !this.IsHandleCreated) return;
 
-            if (lblShortcuts != null)
+            try
             {
-                int maxLblRight = btnMin.Left - 10;
-                lblShortcuts.MaximumSize = new Size(Math.Max(100, maxLblRight - lblShortcuts.Left), 20);
-            }
+                int w = panelHeader.Width;
+                btnClose.Location = new Point(w - 46, 0);
+                btnMax.Location = new Point(w - 92, 0);
+                btnMin.Location = new Point(w - 138, 0);
 
-            // ── NEW: keep the barcode box anchored to the title buttons, and let
-            //    the search box fill the space between it and the invoice number ──
-            int rightEdge = btnMin.Left - 20;
-            if (txtBarcode != null)
-            {
-                txtBarcode.Location = new Point(rightEdge - txtBarcode.Width, 10);
-                if (lblBarcodeHeader != null)
-                    lblBarcodeHeader.Location = new Point(txtBarcode.Left - 16, 12);
-                if (lblBarcodeSep != null)
-                    lblBarcodeSep.Location = new Point(txtBarcode.Left - 34, 10);
-            }
+                if (lblShortcuts != null)
+                {
+                    int maxLblRight = btnMin.Left - 10;
+                    lblShortcuts.MaximumSize = new Size(Math.Max(100, maxLblRight - lblShortcuts.Left), 20);
+                }
 
-            if (txtSearch != null && lblBarcodeSep != null)
-            {
-                int searchRight = lblBarcodeSep.Left - 10;
-                txtSearch.Width = Math.Max(200, searchRight - txtSearch.Left);
+                int rightEdge = btnMin.Left - 20;
+                if (txtBarcode != null)
+                {
+                    txtBarcode.Location = new Point(rightEdge - txtBarcode.Width, 10);
+                    if (lblBarcodeHeader != null)
+                        lblBarcodeHeader.Location = new Point(txtBarcode.Left - 16, 12);
+                    if (lblBarcodeSep != null)
+                        lblBarcodeSep.Location = new Point(txtBarcode.Left - 34, 10);
+                }
+
+                if (txtSearch != null && lblBarcodeSep != null)
+                {
+                    int searchRight = lblBarcodeSep.Left - 10;
+                    txtSearch.Width = Math.Max(200, searchRight - txtSearch.Left);
+                }
             }
+            catch (ObjectDisposedException) { }
         }
 
         private void panelHeader_Resize(object sender, EventArgs e) => RepositionTitleButtons();
@@ -9307,6 +9609,9 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             _productSyncTimer?.Stop(); _productSyncTimer?.Dispose();
             _offlineOrderSyncTimer?.Stop(); _offlineOrderSyncTimer?.Dispose();
             _stockSyncTimer?.Stop(); _stockSyncTimer?.Dispose();
+            _resizeDebounce?.Stop();
+            _resizeDebounce?.Dispose();
+            _resizeDebounce = null;
         }
         // ══════════════════════════════════════════════════════════════════════
         //  SEARCH RESULTS — OWNER-DRAW (modern dark dropdown)
