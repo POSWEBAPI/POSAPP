@@ -34,6 +34,8 @@ namespace POSAPP
                         form.MinimumSize = new Size(minW, minH);
                     }
 
+                    ClampToWorkingArea(form);
+
                     form.Shown += (_, _) => ApplyRecursive(form);
                     form.Resize += (_, _) => ApplyResponsiveLayout(form);
                 }
@@ -41,6 +43,36 @@ namespace POSAPP
                 ApplyRecursive(form);
                 ApplyResponsiveLayout(form);
             }
+        }
+
+        // Nearly every form in this app is FormBorderStyle.None with no custom
+        // WM_NCHITTEST edge-resize logic, so most of them can NEVER be resized
+        // by the user (no OS resize border, and most have no Maximize button
+        // either) — they simply open at their designed ClientSize. That's fine
+        // on the screen they were designed against, but on a smaller/lower-res
+        // monitor a large designed size (e.g. 1150x820) can open partially
+        // off-screen or clipped under the taskbar, with no way for the user to
+        // resize it back into view. Shrink-to-fit (never grow) and re-center
+        // within the actual working area of whichever screen the form landed
+        // on, so it's always fully visible regardless of monitor size.
+        private static void ClampToWorkingArea(Form form)
+        {
+            if (form.WindowState != FormWindowState.Normal) return;
+
+            var workingArea = Screen.FromControl(form).WorkingArea;
+            const int margin = 24; // keep a small gap from the screen edges
+            int maxW = workingArea.Width - margin * 2;
+            int maxH = workingArea.Height - margin * 2;
+
+            int targetW = Math.Max(form.MinimumSize.Width, Math.Min(form.Width, maxW));
+            int targetH = Math.Max(form.MinimumSize.Height, Math.Min(form.Height, maxH));
+
+            if (targetW != form.Width || targetH != form.Height)
+                form.Size = new Size(targetW, targetH);
+
+            int x = workingArea.Left + Math.Max(0, (workingArea.Width - form.Width) / 2);
+            int y = workingArea.Top + Math.Max(0, (workingArea.Height - form.Height) / 2);
+            form.Location = new Point(x, y);
         }
 
         private static void ApplyRecursive(Control root)

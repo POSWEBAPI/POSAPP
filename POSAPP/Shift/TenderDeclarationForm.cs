@@ -650,7 +650,23 @@ namespace POSAPP.Shift
             inner.Controls.Add(footerBg);
 
             inner.MinimumSize = new Size(InnerW, y + 56);
-inner.Dock = DockStyle.Top;
+            // inner is a fixed-width table (denomination rows use fixed
+            // column x-offsets, which doesn't lend itself to percentage
+            // reflow the way a card grid does) — but Dock=Top would stretch
+            // it to the FULL width of `scroll`, leaving the fixed-position
+            // rows clustered on the left with a large empty gap on wide
+            // screens (this form is always opened maximized). Instead, keep
+            // it at its designed width and re-center it horizontally
+            // whenever the scroll area resizes, so it makes sense at any
+            // screen width instead of just hugging the left edge.
+            inner.Size = new Size(InnerW, y + 56);
+            void CenterInner()
+            {
+                int cx = Math.Max(0, (scroll.ClientSize.Width - inner.Width) / 2);
+                inner.Location = new Point(cx, 0);
+            }
+            CenterInner();
+            scroll.Resize += (s, e) => CenterInner();
             scroll.Controls.Add(inner);
             outer.Controls.Add(scroll);
             return outer;

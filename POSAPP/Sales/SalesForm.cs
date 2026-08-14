@@ -312,6 +312,29 @@ namespace POSAPP
                     lblInvoiceNo.Text = "";   // ← ADD THIS
             }));
 
+            // BuildHotItems() lays out its grid using panelHotItems.ClientSize.Width
+            // at call time, but the cards it creates are plain Top|Left-anchored
+            // panels, so they don't reflow on their own when the left column is
+            // resized (e.g. dragging/maximizing the window). Debounce a rebuild
+            // on resize so the grid stays correctly columned at any width,
+            // without rebuilding on every intermediate pixel while dragging.
+            int lastHotItemsWidth = panelHotItems.ClientSize.Width;
+            var hotItemsResizeDebounce = new System.Windows.Forms.Timer { Interval = 150 };
+            hotItemsResizeDebounce.Tick += (s, ev) =>
+            {
+                hotItemsResizeDebounce.Stop();
+                if (panelHotItems.ClientSize.Width != lastHotItemsWidth)
+                {
+                    lastHotItemsWidth = panelHotItems.ClientSize.Width;
+                    BuildHotItems();
+                }
+            };
+            panelHotItems.Resize += (s, ev) =>
+            {
+                hotItemsResizeDebounce.Stop();
+                hotItemsResizeDebounce.Start();
+            };
+
             lblTime.Text = DateTime.Now.ToString("HH:mm");
             lblDate.Text = DateTime.Now.ToString("ddd, dd MMM");
 

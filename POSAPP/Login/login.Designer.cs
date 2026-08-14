@@ -10,10 +10,12 @@ namespace POSAPP
         private Label lblAppTitle;
         private Button btnMinimize, btnMaximize, btnClose;
 
+        private TableLayoutPanel panelCenterContainer;
         private Panel panelRight;
         private PictureBox picLogo;
         private Label lblLogoFallback;
         private Label lblBrandTagline;
+        private Panel panelFooterBar;
 
         private Label lblWelcome;
         private Label lblSubtitle;
@@ -40,6 +42,7 @@ namespace POSAPP
 
             // ── Form ──────────────────────────────────────────────
             this.ClientSize = new Size(1000, 940);
+            this.MinimumSize = new Size(760, 620);
             this.FormBorderStyle = FormBorderStyle.None;
             this.StartPosition = FormStartPosition.CenterScreen;
             this.BackColor = Color.FromArgb(15, 23, 42);
@@ -64,9 +67,15 @@ namespace POSAPP
                 Location = new Point(14, 10)
             };
 
+            // Positions below are only the starting layout — Anchor keeps each
+            // button pinned to the top-right corner as the title bar is resized,
+            // so we no longer need to recompute Location by hand on every resize.
             btnMinimize = MakeTitleBtn("─", new Point(860, 0));
             btnMaximize = MakeTitleBtn("□", new Point(900, 0));
             btnClose = MakeTitleBtn("✕", new Point(940, 0));
+            btnMinimize.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            btnMaximize.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            btnClose.Anchor = AnchorStyles.Top | AnchorStyles.Right;
 
             btnMinimize.Click += btnMinimize_Click;
             btnMaximize.Click += btnMaximize_Click;
@@ -81,22 +90,24 @@ namespace POSAPP
             panelTitleBar.MouseMove += panelTitleBar_MouseMove;
             panelTitleBar.MouseUp += panelTitleBar_MouseUp;
             panelTitleBar.DoubleClick += panelTitleBar_DoubleClick;
-            panelTitleBar.Resize += panelTitleBar_Resize;
 
             panelTitleBar.Controls.AddRange(new Control[]
                 { lblAppTitle, btnMinimize, btnMaximize, btnClose });
 
             // ── CENTERED CARD ───────────────────────────────────────
-            // ── CENTERED CARD ─── increase height to fit larger keypad comfortably ──
+            // The card keeps a fixed comfortable size for the touch keypad;
+            // centering is handled by panelCenterContainer below (a 3x3
+            // TableLayoutPanel whose middle cell is exactly cardWidth x cardHeight,
+            // with the surrounding percent-sized cells absorbing any extra
+            // space) instead of recomputing Location by hand on every resize.
             const int cardWidth = 440;
-            const int cardHeight = 820;   // was 660 — more room for bigger keypad
-            int cardX = (1000 - cardWidth) / 2;
-            int cardY = (760 - cardHeight) / 2 + 10;
+            const int cardHeight = 820;
 
             panelRight = new Panel
             {
                 Size = new Size(cardWidth, cardHeight),
-                Location = new Point(cardX, cardY),
+                Margin = new Padding(0),
+                Anchor = AnchorStyles.None,
                 BackColor = Color.White
             };
             panelRight.Paint += (s, ev) =>
@@ -313,21 +324,50 @@ namespace POSAPP
             });
 
             // ── Footer (outside the card) ───────────────────────────
+            // Dock=Bottom panel + Dock=Fill label keeps the footer text
+            // horizontally centered at any form width without manual math.
+            panelFooterBar = new Panel
+            {
+                Height = 34,
+                Dock = DockStyle.Bottom,
+                BackColor = Color.Transparent
+            };
             lblFooter = new Label
             {
                 Text = "",
                 Font = new Font("Segoe UI", 8.5F),
                 ForeColor = Color.FromArgb(100, 116, 139),
                 BackColor = Color.Transparent,
-                AutoSize = false,
-                Size = new Size(400, 20),
-                Location = new Point((1000 - 400) / 2, 940 - 34),
+                Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleCenter
             };
+            panelFooterBar.Controls.Add(lblFooter);
+
+            // ── Center container ─────────────────────────────────────
+            // 3x3 grid: side rows/columns are Percent (share leftover space
+            // equally), the middle row/column is Absolute (card's exact
+            // size). The card sits in the middle cell, so it stays
+            // perfectly centered as the form is resized, maximized, or
+            // moved to a different resolution/DPI — no Resize handler needed.
+            panelCenterContainer = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Color.Transparent,
+                AutoScroll = true,
+                ColumnCount = 3,
+                RowCount = 3
+            };
+            panelCenterContainer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            panelCenterContainer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, cardWidth));
+            panelCenterContainer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            panelCenterContainer.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            panelCenterContainer.RowStyles.Add(new RowStyle(SizeType.Absolute, cardHeight));
+            panelCenterContainer.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            panelCenterContainer.Controls.Add(panelRight, 1, 1);
 
             // ── Z-order ───────────────────────────────────────────
-            this.Controls.Add(lblFooter);
-            this.Controls.Add(panelRight);
+            this.Controls.Add(panelCenterContainer);
+            this.Controls.Add(panelFooterBar);
             this.Controls.Add(panelTitleBar);
             panelTitleBar.BringToFront();
 

@@ -90,12 +90,30 @@ namespace POSAPP
         static GraphicsPath RoundRect(Rectangle r, int radius)
         {
             var path = new GraphicsPath();
+
+            if (r.Width <= 0 || r.Height <= 0)
+                return path;
+
+            // Prevent radius from being larger than the rectangle.
+            int maxRadius = Math.Min(r.Width, r.Height) / 2;
+            radius = Math.Max(0, Math.Min(radius, maxRadius));
+
+            // No rounding required.
+            if (radius <= 0)
+            {
+                path.AddRectangle(r);
+                return path;
+            }
+
             int d = radius * 2;
+
             path.AddArc(r.X, r.Y, d, d, 180, 90);
             path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
             path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
             path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+
             path.CloseFigure();
+
             return path;
         }
 
@@ -530,24 +548,32 @@ namespace POSAPP
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
             inner.Width = Math.Max(800, panelContent.Width - panelContent.Padding.Horizontal - 4);
+            // Width tracking only — the row TableLayoutPanels below are Dock=Top,
+            // so they (and their percent-sized columns/Dock=Fill cards) automatically
+            // restretch to inner's new width without a full rebuild. A full data +
+            // layout rebuild still happens on actual form resize (debounced, see
+            // Dashboard.cs Form2_Load) which is where fresh stats get reloaded.
             panelContent.Resize += (s, _) =>
-            {
                 inner.Width = Math.Max(800, panelContent.Width - panelContent.Padding.Horizontal - 4);
-                RebuildInner(inner);
-            };
             RebuildInner(inner);
             panelContent.Controls.Add(inner);
         }
 
         // ── RebuildInner ──────────────────────────────────────────────────
+        // Builds the dashboard's three content rows as TableLayoutPanels with
+        // percentage-width columns (instead of hand-computed pixel offsets).
+        // Each row is Dock=Top inside `inner`, and cards inside each row are
+        // Dock=Fill within their cell — so the whole grid restretches to any
+        // window width/DPI automatically, without needing to recompute a
+        // single coordinate by hand.
         private void RebuildInner(Panel inner)
         {
             inner.Controls.Clear();
-            int cw = inner.Width, gap = 16, y = 4;
+            const int gap = 16;
 
             int availH = Math.Max(650, panelContent.ClientSize.Height - panelContent.Padding.Vertical - 8);
 
-            // ── STAT CARDS ────────────────────────────────────────────────
+            // ── STAT CARDS ROW ───────────────────────────────────────────
             _dashStats = LoadDashboardStats();
             _statAnimTimer = AnimateProgress(_statAnimTimer, v => _statAnimProgress = v,
            () => { if (_statCards != null) foreach (var sc in _statCards) sc?.Invalidate(); },
@@ -566,13 +592,27 @@ namespace POSAPP
         new { Icon="↩",  Val=FormatAmount(_dashStats.returnsTotal),  Lbl="Sales Returns",      Pos=false, Accent=C_Purple, Bg=Color.FromArgb(241,236,255) },
     };
 
-            int scw = (cw - gap * 3) / 4;
             int statH = Math.Max(96, (int)(availH * 0.13));
+            var statsRow = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                Height = statH,
+                Margin = new Padding(0, 4, 0, gap),
+                ColumnCount = statData.Length,
+                RowCount = 1,
+                BackColor = Color.Transparent
+            };
+            for (int i = 0; i < statData.Length; i++)
+                statsRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / statData.Length));
+            statsRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
             for (int i = 0; i < statData.Length; i++)
             {
                 var d = statData[i];
                 int capturedI = i;
-                var card = MakeCard(i * (scw + gap), y, scw, statH);
+                var card = MakeCard(0, 0, 0, 0);
+                card.Dock = DockStyle.Fill;
+                card.Margin = new Padding(i == 0 ? 0 : gap / 2, 0, i == statData.Length - 1 ? 0 : gap / 2, 0);
                 card.Cursor = Cursors.Hand;
                 _statCards[i] = card;
 
@@ -612,67 +652,104 @@ namespace POSAPP
                 };
 
                 card.Click += (s, e) => StatCard_Click(capturedI);
-                inner.Controls.Add(card);
+                statsRow.Controls.Add(card, i, 0);
             }
-            y += 104 + gap;
 
             // ── MIDDLE ROW ────────────────────────────────────────────────
-            int chartW = (int)(cw * 0.42);
-            int topProdW = (int)(cw * 0.30);
-            int lowStockW = cw - chartW - topProdW - gap * 2;
+            // Column weights (42/30/28) mirror the original proportions, but
+            // as TableLayoutPanel percent columns instead of cw-multiplied
+            // pixel math, so they hold their proportions at any width.
             int midH = Math.Max(260, (int)(availH * 0.34));
-           //int midH = 290;
+            var middleRow = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                Height = midH,
+                Margin = new Padding(0, 0, 0, gap),
+                ColumnCount = 3,
+                RowCount = 1,
+                BackColor = Color.Transparent
+            };
+            middleRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42f));
+            middleRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 30f));
+            middleRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 28f));
+            middleRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-            var salesCard = MakeCard(0, y, chartW, midH);
+            var salesCard = MakeCard(0, 0, 0, 0);
+            salesCard.Dock = DockStyle.Fill;
+            salesCard.Margin = new Padding(0, 0, gap / 2, 0);
             salesCard.Paint += PaintSalesChart;
-            inner.Controls.Add(salesCard);
+            middleRow.Controls.Add(salesCard, 0, 0);
             _chartAnimTimer = AnimateProgress(_chartAnimTimer, v => _chartAnimProgress = v,
      () => salesCard.Invalidate(),
      durationMs: 1700);
 
-            var topProdCard = MakeCard(chartW + gap, y, topProdW, midH);
+            var topProdCard = MakeCard(0, 0, 0, 0);
+            topProdCard.Dock = DockStyle.Fill;
+            topProdCard.Margin = new Padding(gap / 2, 0, gap / 2, 0);
             topProdCard.Paint += PaintTopProducts;
             _topProductsPanel = topProdCard;
             _topProductsPanel.MouseMove += TopProducts_MouseMove;
             _topProductsPanel.MouseLeave += TopProducts_MouseLeave;
-            inner.Controls.Add(topProdCard);
+            middleRow.Controls.Add(topProdCard, 1, 0);
 
             _topProdAnimTimer = AnimateProgress(_topProdAnimTimer, v => _topProdAnimProgress = v,
        () => _topProductsPanel?.Invalidate(),
        durationMs: 1700);
 
-            var lowStockCard = MakeCard(chartW + topProdW + gap * 2, y, lowStockW, midH);
+            var lowStockCard = MakeCard(0, 0, 0, 0);
+            lowStockCard.Dock = DockStyle.Fill;
+            lowStockCard.Margin = new Padding(gap / 2, 0, 0, 0);
             lowStockCard.Paint += PaintLowStock;
-            inner.Controls.Add(lowStockCard);
-
-            y += midH + gap;
+            middleRow.Controls.Add(lowStockCard, 2, 0);
 
             // ── BOTTOM ROW ────────────────────────────────────────────────
-            int txW = (int)(cw * 0.50);
-            int payW = (int)(cw * 0.26);
-            int qaW = cw - txW - payW - gap * 2;
-            //int botH = 330;
             int botH = Math.Max(280, availH - statH - midH - gap * 3 - 60);
+            var bottomRow = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                Height = botH,
+                Margin = new Padding(0),
+                ColumnCount = 3,
+                RowCount = 1,
+                BackColor = Color.Transparent
+            };
+            bottomRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 48f));
+            bottomRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 28f));
+            bottomRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 24f));
+            bottomRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-            var txCard = MakeCard(0, y, txW, botH);
+            var txCard = MakeCard(0, 0, 0, 0);
+            txCard.Dock = DockStyle.Fill;
+            txCard.Margin = new Padding(0, 0, gap / 2, 0);
             BuildTransactionCard(txCard);
-            inner.Controls.Add(txCard);
+            bottomRow.Controls.Add(txCard, 0, 0);
 
-            _payCard = MakeCard(txW + gap, y, payW, botH);
+            _payCard = MakeCard(0, 0, 0, 0);
+            _payCard.Dock = DockStyle.Fill;
+            _payCard.Margin = new Padding(gap / 2, 0, gap / 2, 0);
             _payCard.Paint += PaintPaymentMethods;
-            inner.Controls.Add(_payCard);
+            bottomRow.Controls.Add(_payCard, 1, 0);
 
             _pieAnimTimer = AnimateProgress(_pieAnimTimer, v => _pieAnimProgress = v,
       () => { _payCard?.Invalidate(); _paymentPanel?.Invalidate(); },
       durationMs: 1700);
 
-            var qaCard = MakeCard(txW + payW + gap * 2, y, qaW, botH);
+            var qaCard = MakeCard(0, 0, 0, 0);
+            qaCard.Dock = DockStyle.Fill;
+            qaCard.Margin = new Padding(gap / 2, 0, 0, 0);
             BuildQuickActionsCard(qaCard);
-            inner.Controls.Add(qaCard);
+            bottomRow.Controls.Add(qaCard, 2, 0);
 
-            y += botH + gap;
-            y += 44 + 10;
-            inner.Height = y;
+            // Dock=Top stacking in WinForms places the LAST-added control
+            // outermost (closest to the edge) — matching the pattern already
+            // used above for panelTitleBar/panelSidebar/panelMain. So to get
+            // statsRow → middleRow → bottomRow top-to-bottom, they must be
+            // added in the reverse order: bottomRow, middleRow, statsRow.
+            inner.Controls.Add(bottomRow);
+            inner.Controls.Add(middleRow);
+            inner.Controls.Add(statsRow);
+
+            inner.Height = statH + midH + botH + gap * 3 + 44 + 10;
         }
 
         // ── PAINT: Sales Chart ────────────────────────────────────────────
@@ -965,11 +1042,17 @@ namespace POSAPP
                 e.Graphics.DrawString("Recent Transactions", F_H2, new SolidBrush(C_Navy), new PointF(18, 18));
             };
 
+            // Dock=Fill + card.Padding (rather than a fixed Location/Size +
+            // Anchor) reserves room for the header above and recalculates
+            // fresh against the card's *current* size on every layout pass —
+            // so it's correct immediately even though `card` is still 0x0 at
+            // this point (it hasn't been placed into its TableLayoutPanel
+            // cell yet), unlike Anchor which would freeze in a bad initial
+            // delta computed from that 0x0 size.
+            card.Padding = new Padding(14, 60, 14, 14);
             dgvTransactions = new DataGridView
             {
-                Location = new Point(14, 60),
-                Size = new Size(card.Width - 28, card.Height - 74),
-                Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+                Dock = DockStyle.Fill,
                 AllowUserToAddRows = false,
                 AllowUserToDeleteRows = false,
                 ReadOnly = true,
@@ -1238,76 +1321,250 @@ namespace POSAPP
         {
             card.Paint += (s, e) =>
             {
-                e.Graphics.DrawString("Quick Actions", F_H2, new SolidBrush(C_Navy), new PointF(16, 16));
+                var g = e.Graphics;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+
+                g.DrawString(
+                    "Quick Actions",
+                    F_H2,
+                    new SolidBrush(C_Navy),
+                    new PointF(16, 16));
             };
 
             var actions = new[]
             {
-                new { Icon="🛒", Lbl="New Sale", Clr=C_Blue,   Bg=Color.FromArgb(222,235,255) },
-                new { Icon="📊", Lbl="Reports",  Clr=C_Green,  Bg=Color.FromArgb(214,248,232) },
-                new { Icon="💰", Lbl="Payment",  Clr=C_Pink,   Bg=Color.FromArgb(252,222,238) },
-                new { Icon="↩",  Lbl="Return",   Clr=C_Red,    Bg=Color.FromArgb(255,222,222) },
+        new { Icon = "🛒", Lbl = "New Sale", Clr = C_Blue,   Bg = Color.FromArgb(222, 235, 255) },
+        new { Icon = "📊", Lbl = "Reports",  Clr = C_Green,  Bg = Color.FromArgb(214, 248, 232) },
+        new { Icon = "💰", Lbl = "Payment",  Clr = C_Pink,   Bg = Color.FromArgb(252, 222, 238) },
+        new { Icon = "↩",  Lbl = "Return",   Clr = C_Red,    Bg = Color.FromArgb(255, 222, 222) },
+    };
+
+            const int cols = 2;
+            const int rows = 2;
+            const int gap = 10;
+
+            card.Padding = new Padding(14, 54, 14, 14);
+
+            var grid = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = cols,
+                RowCount = rows,
+                BackColor = Color.Transparent,
+                Margin = Padding.Empty,
+                Padding = Padding.Empty
             };
 
-            int cols = 2;
-            int gap = 12;
-            int btnW = (card.Width - 32 - gap) / cols;
-            int btnH = 96;
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
+
+            grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50f));
+            grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50f));
 
             for (int i = 0; i < actions.Length; i++)
             {
                 var a = actions[i];
-                int bx = 16 + (i % cols) * (btnW + gap);
-                int by = 60 + (i / cols) * (btnH + gap);
+
+                int col = i % cols;
+                int row = i / cols;
 
                 var btn = new Button
                 {
-                    Size = new Size(btnW, btnH),
-                    Location = new Point(bx, by),
+                    Dock = DockStyle.Fill,
+                    Margin = new Padding(
+                        col == 0 ? 0 : gap / 2,
+                        row == 0 ? 0 : gap / 2,
+                        col == cols - 1 ? 0 : gap / 2,
+                        row == rows - 1 ? 0 : gap / 2),
+
                     FlatStyle = FlatStyle.Flat,
                     BackColor = a.Bg,
                     ForeColor = C_Navy,
                     Cursor = Cursors.Hand,
-                    Text = ""
+                    Text = "",
+                    TabStop = false,
+                    UseVisualStyleBackColor = false
                 };
+
                 btn.FlatAppearance.BorderSize = 0;
                 btn.FlatAppearance.MouseOverBackColor = Color.FromArgb(
-                    Math.Max(0, a.Bg.R - 16), Math.Max(0, a.Bg.G - 16), Math.Max(0, a.Bg.B - 16));
-                btn.Region = new Region(RoundRect(new Rectangle(0, 0, btnW, btnH), 14));
-                btn.Paint += (s, e2) =>
+                    Math.Max(0, a.Bg.R - 10),
+                    Math.Max(0, a.Bg.G - 10),
+                    Math.Max(0, a.Bg.B - 10));
+
+                // Rounded corners
+                void ApplyRegion()
                 {
-                    var g = e2.Graphics;
+                    if (btn.Width < 2 || btn.Height < 2)
+                        return;
+
+                    btn.Region?.Dispose();
+
+                    int radius = Math.Min(
+                        12,
+                        Math.Min(btn.Width, btn.Height) / 4);
+
+                    if (radius <= 0)
+                        return;
+
+                    using var path = RoundRect(
+                        new Rectangle(0, 0, btn.Width - 1, btn.Height - 1),
+                        radius);
+
+                    btn.Region = new Region(path);
+                }
+
+                btn.Resize += (s, e) => ApplyRegion();
+                ApplyRegion();
+
+                btn.Paint += (s, e) =>
+                {
+                    var g = e.Graphics;
                     g.SmoothingMode = SmoothingMode.AntiAlias;
+                    g.TextRenderingHint =
+                        System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
 
-                    // White rounded square icon badge with colored icon
-                    var iconRc = new Rectangle(btnW / 2 - 22, 14, 44, 44);
-                    using var iconBgPath = RoundRect(iconRc, 12);
-                    g.FillPath(new SolidBrush(Color.White), iconBgPath);
-                    using var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-                    g.DrawString(a.Icon, new Font("Segoe UI Emoji", 17F), new SolidBrush(a.Clr), iconRc, sf);
+                    int w = btn.ClientSize.Width;
+                    int h = btn.ClientSize.Height;
 
-                    // Bold label below
-                    g.DrawString(a.Lbl, new Font("Segoe UI", 10F, FontStyle.Bold), new SolidBrush(C_Navy),
-                        new RectangleF(0, 64, btnW, 24), sf);
+                    if (w <= 10 || h <= 10)
+                        return;
+
+                    // ─────────────────────────────────────────────
+                    // Responsive sizing
+                    // ─────────────────────────────────────────────
+
+                    // Icon badge scales with available button size.
+                    int badgeSize = Math.Min(
+                        42,
+                        Math.Max(30, Math.Min(w - 18, h / 3)));
+
+                    int badgeX = (w - badgeSize) / 2;
+
+                    // Keep everything centered vertically.
+                    int totalContentHeight =
+                        badgeSize + 8 + 20;
+
+                    int startY = Math.Max(
+                        8,
+                        (h - totalContentHeight) / 2);
+
+                    // ─────────────────────────────────────────────
+                    // Icon background
+                    // ─────────────────────────────────────────────
+
+                    var iconRc = new Rectangle(
+                        badgeX,
+                        startY,
+                        badgeSize,
+                        badgeSize);
+
+                    int iconRadius = Math.Min(11, badgeSize / 3);
+
+                    using (var iconPath = RoundRect(
+                        iconRc,
+                        iconRadius))
+                    using (var iconBg = new SolidBrush(Color.White))
+                    {
+                        g.FillPath(iconBg, iconPath);
+                    }
+
+                    // ─────────────────────────────────────────────
+                    // Icon
+                    // ─────────────────────────────────────────────
+
+                    float iconFontSize = Math.Max(
+                        12f,
+                        Math.Min(17f, badgeSize * 0.40f));
+
+                    using var iconFont =
+                        new Font("Segoe UI Emoji", iconFontSize);
+
+                    using var iconSf = new StringFormat
+                    {
+                        Alignment = StringAlignment.Center,
+                        LineAlignment = StringAlignment.Center
+                    };
+
+                    g.DrawString(
+                        a.Icon,
+                        iconFont,
+                        new SolidBrush(a.Clr),
+                        iconRc,
+                        iconSf);
+
+                    // ─────────────────────────────────────────────
+                    // Label
+                    // ─────────────────────────────────────────────
+
+                    int labelY = startY + badgeSize + 7;
+
+                    using var labelFont =
+                        new Font(
+                            "Segoe UI",
+                            8.5F,
+                            FontStyle.Bold);
+
+                    using var labelSf = new StringFormat
+                    {
+                        Alignment = StringAlignment.Center,
+                        LineAlignment = StringAlignment.Center,
+                        Trimming = StringTrimming.EllipsisCharacter,
+                        FormatFlags = StringFormatFlags.NoWrap
+                    };
+
+                    var labelRc = new RectangleF(
+                        6,
+                        labelY,
+                        w - 12,
+                        20);
+
+                    g.DrawString(
+                        a.Lbl,
+                        labelFont,
+                        new SolidBrush(C_Navy),
+                        labelRc,
+                        labelSf);
                 };
 
+                // ─────────────────────────────────────────────
+                // Actions
+                // ─────────────────────────────────────────────
+
                 if (a.Lbl == "New Sale")
+                {
                     btn.Click += (s, e2) =>
                     {
                         SetActiveNav(btnNavSales);
-                        ShowPage(new SalesForm(_selectedCompanyId));
+
+                        ShowPage(
+                            new SalesForm(_selectedCompanyId));
                     };
+                }
+
                 if (a.Lbl == "Return")
+                {
                     btn.Click += (s, e2) =>
                     {
                         SetActiveNav(btnNavSalesReturn);
-                        ShowPage(new SalesReturnForm(_selectedCompanyId, _currencySymbol));
-                    };
-                if (a.Lbl == "Reports")
-                    btn.Click += (s, e2) => ShowReportsPopup();
 
-                card.Controls.Add(btn);
+                        ShowPage(
+                            new SalesReturnForm(
+                                _selectedCompanyId,
+                                _currencySymbol));
+                    };
+                }
+
+                if (a.Lbl == "Reports")
+                {
+                    btn.Click += (s, e2) =>
+                        ShowReportsPopup();
+                }
+
+                grid.Controls.Add(btn, col, row);
             }
+
+            card.Controls.Add(grid);
         }
     }
 }

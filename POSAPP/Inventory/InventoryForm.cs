@@ -67,7 +67,8 @@ namespace POSAPP.Inventory
         private TextBox txtSearch;
         private Label lblSearch, lblStatus;
         private Button btnRefresh, btnClose, btnExportExcel, btnExportPdf;
-        private Panel pnlTop, pnlCards;
+        private Panel pnlTop;
+        private TableLayoutPanel pnlCards;
 
         // Analytics card value labels (refreshed whenever data loads/filters)
         private Label lblTotalSkuValue, lblTotalQtyValue, lblLowStockValue, lblOutOfStockValue;
@@ -102,26 +103,24 @@ namespace POSAPP.Inventory
                 Location = new Point(12, 14)
             };
 
-            btnClose = new Button
+            // As with the export buttons below, Location was computed from
+            // pnlTop.Width before pnlTop was Docked (so it read the WinForms
+            // default width, not the real one) — wrap in a fixed-width
+            // Dock=Right container so Dock (not a mis-anchored margin)
+            // positions these correctly at any form width.
+            const int topBtnGap = 10;
+            var pnlTopBtns = new Panel
             {
-                Text = "✕  Close",
-                Size = new Size(90, 32),
-                Location = new Point(pnlTop.Width - 110, 14),
-                Anchor = AnchorStyles.Top | AnchorStyles.Right,
-                FlatStyle = FlatStyle.Flat,
-                ForeColor = Color.White,
-                BackColor = Color.FromArgb(200, 60, 60),
-                Cursor = Cursors.Hand
+                Dock = DockStyle.Right,
+                Width = 95 + topBtnGap + 90,
+                BackColor = Color.Transparent
             };
-            btnClose.FlatAppearance.BorderColor = Color.FromArgb(220, 90, 90);
-            btnClose.Click += (s, e) => Close();
 
             btnRefresh = new Button
             {
                 Text = "⟳  Refresh",
                 Size = new Size(95, 32),
-                Location = new Point(pnlTop.Width - 215, 14),
-                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                Location = new Point(0, 14),
                 FlatStyle = FlatStyle.Flat,
                 ForeColor = Color.White,
                 BackColor = Color.FromArgb(60, 100, 170),
@@ -130,27 +129,61 @@ namespace POSAPP.Inventory
             btnRefresh.FlatAppearance.BorderColor = Color.FromArgb(80, 130, 200);
             btnRefresh.Click += async (s, e) => await LoadStockAsync();
 
-            pnlTop.Controls.AddRange(new Control[] { lblTitle, btnRefresh, btnClose });
+            btnClose = new Button
+            {
+                Text = "✕  Close",
+                Size = new Size(90, 32),
+                Location = new Point(95 + topBtnGap, 14),
+                FlatStyle = FlatStyle.Flat,
+                ForeColor = Color.White,
+                BackColor = Color.FromArgb(200, 60, 60),
+                Cursor = Cursors.Hand
+            };
+            btnClose.FlatAppearance.BorderColor = Color.FromArgb(220, 90, 90);
+            btnClose.Click += (s, e) => Close();
+
+            pnlTopBtns.Controls.AddRange(new Control[] { btnRefresh, btnClose });
+
+            pnlTop.Controls.AddRange(new Control[] { lblTitle, pnlTopBtns });
 
             // ── Analytics cards (mirrors React AnalyticsCard row) ──────────────
-            pnlCards = new Panel
+            pnlCards = new TableLayoutPanel
             {
                 Dock = DockStyle.Top,
                 Height = 100,
                 BackColor = Color.FromArgb(245, 247, 250),
-                Padding = new Padding(10, 10, 10, 6)
+                Padding = new Padding(6, 10, 6, 6),
+                ColumnCount = 4,
+                RowCount = 1
             };
+            for (int i = 0; i < 4; i++)
+                pnlCards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25f));
+            pnlCards.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
+            // Cards are Dock=Fill inside equal-percent TableLayoutPanel columns
+            // (instead of fixed 245px-wide panels at hardcoded x-offsets), so
+            // the row scales correctly at any window width — including the
+            // form's own MinimumSize, where the old fixed x=790 4th card would
+            // have been clipped off the right edge.
             var cardTotalSku = MakeAnalyticsCard("Total SKU", "All stock keeping units",
-                Color.FromArgb(37, 99, 235), out lblTotalSkuValue, 10);
+                Color.FromArgb(37, 99, 235), out lblTotalSkuValue);
             var cardTotalQty = MakeAnalyticsCard("Total Qty", "Total available quantity",
-                Color.FromArgb(13, 148, 136), out lblTotalQtyValue, 270);
+                Color.FromArgb(13, 148, 136), out lblTotalQtyValue);
             var cardLowStock = MakeAnalyticsCard("Low Stock", "Items below stock level",
-                Color.FromArgb(217, 119, 6), out lblLowStockValue, 530);
+                Color.FromArgb(217, 119, 6), out lblLowStockValue);
             var cardOutOfStock = MakeAnalyticsCard("Out Of Stock", "Items currently unavailable",
-                Color.FromArgb(220, 38, 38), out lblOutOfStockValue, 790);
+                Color.FromArgb(220, 38, 38), out lblOutOfStockValue);
 
-            pnlCards.Controls.AddRange(new Control[] { cardTotalSku, cardTotalQty, cardLowStock, cardOutOfStock });
+            var cardGap = new Padding(4, 0, 4, 0);
+            cardTotalSku.Margin = new Padding(0, 0, 4, 0);
+            cardTotalQty.Margin = cardGap;
+            cardLowStock.Margin = cardGap;
+            cardOutOfStock.Margin = new Padding(4, 0, 0, 0);
+
+            pnlCards.Controls.Add(cardTotalSku, 0, 0);
+            pnlCards.Controls.Add(cardTotalQty, 1, 0);
+            pnlCards.Controls.Add(cardLowStock, 2, 0);
+            pnlCards.Controls.Add(cardOutOfStock, 3, 0);
 
             // ── Search / export bar ─────────────────────────────────────────
             var pnlFilter = new Panel
@@ -172,27 +205,29 @@ namespace POSAPP.Inventory
             txtSearch.PlaceholderText = "SKU / Item / UOM…";
             txtSearch.TextChanged += (s, e) => { _searchTimer.Stop(); _searchTimer.Start(); };
 
-            btnExportPdf = new Button
+            // These two buttons used to compute Location from pnlFilter.Width
+            // and rely on Anchor=Top|Right — but pnlFilter.Width is still just
+            // the WinForms default at this point (pnlFilter hasn't been Docked
+            // yet), so the anchor margin got captured against the wrong width
+            // and could put the buttons off-screen once the form reached its
+            // real size. Wrapping them in a small Dock=Right container (whose
+            // own Width is a known fixed constant, not dependent on the
+            // parent's eventual docked size) sidesteps that entirely — the
+            // container is always positioned correctly by Dock, and the
+            // buttons inside it use fixed offsets relative to that known width.
+            const int btnW = 90, btnGap = 8;
+            var pnlExportBtns = new Panel
             {
-                Text = "PDF",
-                Size = new Size(90, 32),
-                Anchor = AnchorStyles.Top | AnchorStyles.Right,
-                Location = new Point(pnlFilter.Width - 100, (pnlFilter.Height - 32) / 2),
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(220, 38, 38),
-                ForeColor = Color.White,
-                Font = new Font("Segoe UI", 9f, FontStyle.Bold),
-                Cursor = Cursors.Hand
+                Dock = DockStyle.Right,
+                Width = btnW * 2 + btnGap,
+                BackColor = Color.Transparent
             };
-            btnExportPdf.FlatAppearance.BorderColor = Color.FromArgb(180, 30, 30);
-            btnExportPdf.Click += (s, e) => ExportPdf();
 
             btnExportExcel = new Button
             {
                 Text = "Excel",
-                Size = new Size(90, 32),
-                Anchor = AnchorStyles.Top | AnchorStyles.Right,
-                Location = new Point(pnlFilter.Width - 198, (pnlFilter.Height - 32) / 2),
+                Size = new Size(btnW, 32),
+                Location = new Point(0, (pnlFilter.Height - 32) / 2),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(22, 163, 74),
                 ForeColor = Color.White,
@@ -202,7 +237,23 @@ namespace POSAPP.Inventory
             btnExportExcel.FlatAppearance.BorderColor = Color.FromArgb(15, 120, 55);
             btnExportExcel.Click += (s, e) => ExportExcel();
 
-            pnlFilter.Controls.AddRange(new Control[] { lblSearch, txtSearch, btnExportExcel, btnExportPdf });
+            btnExportPdf = new Button
+            {
+                Text = "PDF",
+                Size = new Size(btnW, 32),
+                Location = new Point(btnW + btnGap, (pnlFilter.Height - 32) / 2),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(220, 38, 38),
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 9f, FontStyle.Bold),
+                Cursor = Cursors.Hand
+            };
+            btnExportPdf.FlatAppearance.BorderColor = Color.FromArgb(180, 30, 30);
+            btnExportPdf.Click += (s, e) => ExportPdf();
+
+            pnlExportBtns.Controls.AddRange(new Control[] { btnExportExcel, btnExportPdf });
+
+            pnlFilter.Controls.AddRange(new Control[] { lblSearch, txtSearch, pnlExportBtns });
 
             // ── Status bar ───────────────────────────────────────────────────
             var pnlStatus = new Panel
@@ -273,14 +324,12 @@ namespace POSAPP.Inventory
         //  Analytics card factory (mirrors React <AnalyticsCard />)
         // ──────────────────────────────────────────────────────────────────────
         private Panel MakeAnalyticsCard(string title, string subtitle, Color accent,
-            out Label valueLabel, int x)
+            out Label valueLabel)
         {
             var card = new Panel
             {
-                Size = new Size(245, 84),
-                Location = new Point(x, 6),
-                BackColor = Color.White,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left
+                Dock = DockStyle.Fill,
+                BackColor = Color.White
             };
             card.Paint += (s, e) =>
             {
@@ -290,8 +339,8 @@ namespace POSAPP.Inventory
 
             var stripe = new Panel
             {
-                Size = new Size(4, 84),
-                Location = new Point(0, 0),
+                Dock = DockStyle.Left,
+                Width = 4,
                 BackColor = accent
             };
 
