@@ -52,7 +52,6 @@ namespace POSAPP
         private void Form1_Load(object sender, EventArgs e)
         {
             LoadLogo();
-            LayoutCards();
             BuildStatusCard();
             lblShiftInfo.Text = "Shift: Morning | Terminal ID: #01"; // adjust/wire from config as needed
             btnMaximize_Click(null, null);
@@ -111,23 +110,6 @@ namespace POSAPP
             // full-width Size, and centered Location. Just show it.
             picLogo.Visible = false;
             lblLogoFallback.Visible = true;
-        }
-
-        private void LayoutCards()
-        {
-            int titleH = panelTitleBar.Height;
-            int totalW = this.ClientSize.Width;
-            int totalH = this.ClientSize.Height;
-
-            int cardW = panelRight.Width;
-            int cardH = panelRight.Height;
-
-            int cardX = (totalW - cardW) / 2;
-            int cardY = titleH + (totalH - titleH - cardH) / 2;
-            panelRight.Location = new Point(cardX, cardY);
-
-            int footerW = lblFooter.Width;
-            lblFooter.Location = new Point((totalW - footerW) / 2, totalH - 34);
         }
 
         protected override void OnPaint(PaintEventArgs e) => base.OnPaint(e);
@@ -434,17 +416,9 @@ namespace POSAPP
         // ═════════════════════════════════════════════════════════════════════
         // TITLE BAR
         // ═════════════════════════════════════════════════════════════════════
-        private void RepositionTitleButtons()
-        {
-            int w = panelTitleBar.Width;
-            btnClose.Location = new Point(w - 46, 0);
-            btnMaximize.Location = new Point(w - 92, 0);
-            btnMinimize.Location = new Point(w - 138, 0);
-        }
-
-        private void panelTitleBar_Resize(object sender, EventArgs e)
-            => RepositionTitleButtons();
-
+        // Title bar buttons are Anchored Top|Right in the Designer, so they stay
+        // pinned to the corner automatically as panelTitleBar resizes — no manual
+        // repositioning needed here anymore.
         private void panelTitleBar_DoubleClick(object sender, EventArgs e)
             => btnMaximize_Click(sender, e);
 
@@ -456,7 +430,6 @@ namespace POSAPP
             this.WindowState = this.WindowState == FormWindowState.Maximized
                 ? FormWindowState.Normal : FormWindowState.Maximized;
             btnMaximize.Text = this.WindowState == FormWindowState.Maximized ? "❐" : "□";
-            RepositionTitleButtons();
         }
 
         private void btnClose_Click(object sender, EventArgs e) => this.Close();
@@ -501,8 +474,9 @@ namespace POSAPP
         protected override void OnResize(EventArgs e)
         {
             base.OnResize(e);
-            if (panelRight != null) LayoutCards();
-            if (panelTitleBar != null) RepositionTitleButtons();
+            // Card centering and title-bar button positions are now handled
+            // declaratively (TableLayoutPanel + Anchor) — only the floating
+            // status toast still needs manual repositioning here.
             if (_statusCard != null && _statusCard.Visible)
                 _statusCard.Location = new Point(
                     this.ClientSize.Width - _statusCard.Width - 14, 50);
