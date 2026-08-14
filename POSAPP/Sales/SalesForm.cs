@@ -146,6 +146,10 @@ namespace POSAPP
         private string _companyName = "";
         private string _companyVat = "";
         private string _companyWebsite;
+        private List<ChargeDto> _chargesMaster = new();
+        private List<SaleCharge> _charges = new();
+        private bool _chargesAllocated = false;
+        private Button btnCharges;
 
         // ── Merchant credentials ───────────────────────────────────────────────
         private string _snapScanCode = "";
@@ -181,14 +185,26 @@ namespace POSAPP
             public int ItemId { get; set; }
             public decimal OriginalPrice { get; set; }
             public decimal Price { get; set; }
-            public decimal Qty { get; set; }              // was int
+            public decimal Qty { get; set; }
             public decimal DiscountPct { get; set; }
             public string Barcode { get; set; }
-            public int UOM { get; set; } = 1;                        // NEW
-            public string UOMName { get; set; } = "";                // NEW
+            public int UOM { get; set; } = 1;
+            public string UOMName { get; set; } = "";
             public List<UomDto> AvailableUOMs { get; set; } = new();
+
+            // ── NEW: per-line tax ─────────────────────────────
+            public int TaxId { get; set; } = 0;
+            public string TaxCode { get; set; } = "";
+            public decimal TaxPercentage { get; set; } = 0m;
+
             public decimal Total => Math.Round(Price * Qty * (1m - DiscountPct / 100m), 2);
             public decimal DiscountAmt => Math.Round(Price * Qty * (DiscountPct / 100m), 2);
+
+            // Tax computed on the discounted (taxable) amount — mirrors calculateLine() in React
+            public decimal TaxAmt => Math.Round(Total * (TaxPercentage / 100m), 2);
+            public decimal TotalWithTax => Total + TaxAmt; 
+            public decimal Charges { get; set; } = 0m;
+             
         }
         private List<CartItem> _cart = new List<CartItem>();
 
@@ -201,6 +217,14 @@ namespace POSAPP
             public string Category { get; set; }
             public int UOM { get; set; } = 1;
             public List<UomDto> AvailableUOMs { get; set; } = new();
+            public int SalesTaxID { get; set; }
+        }
+        private class SaleCharge
+        {
+            public int ChargesID { get; set; }
+            public string ChargesName { get; set; } = "";
+            public decimal Amount { get; set; }
+            public int Type { get; set; } = 1;   // 1 Fixed, 2 ByQty, 3 Equally
         }
         private class D365ProductDetail
         {
@@ -312,6 +336,7 @@ namespace POSAPP
             _ = LoadStockCacheAsync();
             _ = LoadUomMasterAsync();
             _ = LoadTaxMasterAsync();
+            _ = LoadChargesMasterAsync();
             _ = LoadBankAccountsAsync();
             BuildCustomerSelectDropdown();
             //panelDiscountCard.Resize += (s, e) =>
@@ -442,13 +467,37 @@ namespace POSAPP
             panelFooterBar.SizeChanged += (s, ev) => PositionFooterButtons();
             PositionFooterButtons();
             BuildNumpadDisplay();
-            BuildFloatFooterLabel();
-            panelFooterBar.Controls.Add(btnPrintLast);
-            panelFooterBar.SizeChanged += (s, ev) => PositionFooterButtons();
-            PositionFooterButtons();
-            BuildNumpadDisplay();
-           // panelLeft.PerformLayout();
+            BuildChargesButton();
+            // panelLeft.PerformLayout();
             // _ = SyncProductsFromApiInBackgroundAsync();   // syncs API → SQLite silently
+        }
+        private void BuildChargesButton()
+        {
+            btnCharges = new Button
+            {
+                Text = "➕ Charges",
+                Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
+                ForeColor = TextWhite,
+                BackColor = Color.FromArgb(55, 60, 78),
+                FlatStyle = FlatStyle.Flat,
+                Size = new Size(120, 28),
+                Cursor = Cursors.Hand,
+                Name = "btnCharges"
+            };
+            btnCharges.FlatAppearance.BorderSize = 0;
+            btnCharges.Click += (s, e) => ShowChargesDialog();
+            panelFooterBar.Controls.Add(btnCharges);
+            RefreshChargesButtonLabel();
+        }
+
+        private void RefreshChargesButtonLabel()
+        {
+            if (btnCharges == null) return;
+            decimal total = _charges.Sum(c => c.Amount);
+            btnCharges.Text = _charges.Count == 0 ? "➕ Charges"
+                : (_chargesAllocated ? $"✓ Charges {Fmt(total)}" : $"⚠ Charges {Fmt(total)}");
+            btnCharges.BackColor = _charges.Count == 0 ? Color.FromArgb(55, 60, 78)
+                : (_chargesAllocated ? AccGreen : AccOrange);
         }
         //private void MoveSearchControlsIntoLeftPanel()
         //{
@@ -510,6 +559,25 @@ namespace POSAPP
             {
                 Debug.WriteLine("LoadBankAccountsAsync: " + ex.Message);
             }
+        }
+        private async Task LoadChargesMasterAsync()
+        {
+            try
+            {
+                using var http = new System.Net.Http.HttpClient();
+                http.Timeout = TimeSpan.FromSeconds(15);
+                var resp = await http.GetAsync($"{ApiBaseUrl}/api/charges/by-company?companyId={_companyId}")
+                    .ConfigureAwait(false);
+                if (!resp.IsSuccessStatusCode) return;
+
+                string json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+                var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                JsonElement root = JsonSerializer.Deserialize<JsonElement>(json);
+                JsonElement arr = root.ValueKind == JsonValueKind.Object && root.TryGetProperty("data", out var d) ? d : root;
+
+                _chargesMaster = JsonSerializer.Deserialize<List<ChargeDto>>(arr.GetRawText(), opts) ?? new();
+            }
+            catch (Exception ex) { Debug.WriteLine("LoadChargesMasterAsync: " + ex.Message); }
         }
         private async Task LoadItemIdMapAsync()
         {
@@ -3346,6 +3414,11 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                         price = p.GetDecimal();
                     else if (item.TryGetProperty("SellingPrice", out var p2) && p2.ValueKind == JsonValueKind.Number)
                         price = p2.GetDecimal();
+                    int salesTaxId = 0;
+                    if (item.TryGetProperty("salesTaxID", out var stx) && stx.ValueKind == JsonValueKind.Number)
+                        salesTaxId = stx.GetInt32();
+                    else if (item.TryGetProperty("SalesTaxID", out var stx2) && stx2.ValueKind == JsonValueKind.Number)
+                        salesTaxId = stx2.GetInt32();
 
                     string category = "";
                     if (item.TryGetProperty("category", out var cat))
@@ -3413,7 +3486,8 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                         Barcode = barcode,
                         Category = category,
                         UOM = baseUomId,
-                        AvailableUOMs = availableUOMs
+                        AvailableUOMs = availableUOMs,
+                        SalesTaxID = salesTaxId
                     };
 
                     localCatalog.Add(prod);
@@ -3855,6 +3929,12 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 btnPrintLast.Location = new Point(rx - 104, btnY);
                 rx -= 110;
             }
+            if (btnCharges != null)
+            {
+                btnCharges.Size = new Size(120, btnH);
+                btnCharges.Location = new Point(rx - 120, btnY);
+                rx -= 126;
+            }
 
             // Day End button — just left of reprint
             var btnDayEnd = panelFooterBar.Controls
@@ -3865,6 +3945,255 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 btnDayEnd.Size = new Size(130, btnH);
                 btnDayEnd.Location = new Point(rx - 130, btnY);
             }
+        }
+        private void ShowChargesDialog()
+        {
+            var dlg = new Form
+            {
+                FormBorderStyle = FormBorderStyle.None,
+                StartPosition = FormStartPosition.CenterParent,
+                BackColor = Color.FromArgb(22, 26, 36),
+                ClientSize = new Size(520, 420),
+                KeyPreview = true,
+                ShowInTaskbar = false
+            };
+            dlg.Region = MakeRoundedRegion(dlg.Size, 14);
+
+            var pnlHead = new Panel { BackColor = Color.FromArgb(42, 46, 58), Size = new Size(520, 50), Location = Point.Empty };
+            pnlHead.Controls.Add(new Label
+            {
+                Text = "💰  Order Charges",
+                Font = new Font("Segoe UI", 11F, FontStyle.Bold),
+                ForeColor = TextWhite,
+                BackColor = Color.Transparent,
+                AutoSize = false,
+                Size = new Size(420, 50),
+                Location = new Point(16, 0),
+                TextAlign = ContentAlignment.MiddleLeft
+            });
+            var btnX = new Button
+            {
+                Text = "✕",
+                Font = new Font("Segoe UI", 11F, FontStyle.Bold),
+                ForeColor = TextMuted,
+                BackColor = Color.Transparent,
+                FlatStyle = FlatStyle.Flat,
+                Size = new Size(44, 50),
+                Location = new Point(476, 0),
+                Cursor = Cursors.Hand
+            };
+            btnX.FlatAppearance.BorderSize = 0;
+            btnX.Click += (s, e) => dlg.Close();
+            pnlHead.Controls.Add(btnX);
+            dlg.Controls.Add(pnlHead);
+
+            var listPanel = new Panel { Location = new Point(16, 60), Size = new Size(488, 260), AutoScroll = true, BackColor = Color.FromArgb(28, 32, 42) };
+            dlg.Controls.Add(listPanel);
+
+            void RenderRows()
+            {
+                listPanel.SuspendLayout();
+                listPanel.Controls.Clear();
+                int y = 4;
+                for (int i = 0; i < _charges.Count; i++)
+                {
+                    var chg = _charges[i];
+                    int idx = i;
+                    var row = new Panel { Size = new Size(464, 40), Location = new Point(4, y), BackColor = Color.FromArgb(36, 40, 52) };
+
+                    var cmbType0 = new ComboBox
+                    {
+                        Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+                        ForeColor = TextWhite,
+                        BackColor = Color.FromArgb(44, 48, 60),
+                        DropDownStyle = ComboBoxStyle.DropDownList,
+                        FlatStyle = FlatStyle.Flat,
+                        Size = new Size(160, 28),
+                        Location = new Point(0, 6)
+                    };
+                    foreach (var c in _chargesMaster) cmbType0.Items.Add(c.ChargesName);
+                    int sel = _chargesMaster.FindIndex(c => c.ChargesID == chg.ChargesID);
+                    cmbType0.SelectedIndex = sel >= 0 ? sel : -1;
+                    cmbType0.SelectedIndexChanged += (s, e) =>
+                    {
+                        if (cmbType0.SelectedIndex < 0) return;
+                        var picked = _chargesMaster[cmbType0.SelectedIndex];
+                        _charges[idx].ChargesID = picked.ChargesID;
+                        _charges[idx].ChargesName = picked.ChargesName;
+                        _chargesAllocated = false;
+                    };
+
+                    var txtAmt = new TextBox
+                    {
+                        Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
+                        ForeColor = TextWhite,
+                        BackColor = Color.FromArgb(44, 48, 60),
+                        BorderStyle = BorderStyle.FixedSingle,
+                        Size = new Size(90, 28),
+                        Location = new Point(168, 6),
+                        Text = chg.Amount > 0 ? chg.Amount.ToString("F2") : ""
+                    };
+                    txtAmt.TextChanged += (s, e) =>
+                    {
+                        decimal.TryParse(txtAmt.Text, out decimal amt);
+                        _charges[idx].Amount = amt;
+                        _chargesAllocated = false;
+                    };
+
+                    var cmbDist = new ComboBox
+                    {
+                        Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+                        ForeColor = TextWhite,
+                        BackColor = Color.FromArgb(44, 48, 60),
+                        DropDownStyle = ComboBoxStyle.DropDownList,
+                        FlatStyle = FlatStyle.Flat,
+                        Size = new Size(120, 28),
+                        Location = new Point(264, 6)
+                    };
+                    cmbDist.Items.AddRange(new object[] { "Fixed", "By Quantity", "Equally" });
+                    cmbDist.SelectedIndex = chg.Type - 1;
+                    cmbDist.SelectedIndexChanged += (s, e) =>
+                    {
+                        _charges[idx].Type = cmbDist.SelectedIndex + 1;
+                        _chargesAllocated = false;
+                    };
+
+                    var btnDel = new Button
+                    {
+                        Text = "🗑",
+                        Font = new Font("Segoe UI", 10F),
+                        ForeColor = AccRed,
+                        BackColor = Color.Transparent,
+                        FlatStyle = FlatStyle.Flat,
+                        Size = new Size(30, 28),
+                        Location = new Point(392, 6),
+                        Cursor = Cursors.Hand
+                    };
+                    btnDel.FlatAppearance.BorderSize = 0;
+                    btnDel.Click += (s, e) =>
+                    {
+                        _charges.RemoveAt(idx);
+                        foreach (var l in _cart) l.Charges = 0m;
+                        _chargesAllocated = false;
+                        RenderRows();
+                        RefreshCart(); UpdateTotals(); RefreshChargesButtonLabel();
+                    };
+
+                    row.Controls.AddRange(new Control[] { cmbType0, txtAmt, cmbDist, btnDel });
+                    listPanel.Controls.Add(row);
+                    y += 46;
+                }
+                listPanel.ResumeLayout();
+            }
+            RenderRows();
+
+            var btnAdd = new Button
+            {
+                Text = "+ Add Charge",
+                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
+                ForeColor = Color.White,
+                BackColor = AccBlue,
+                FlatStyle = FlatStyle.Flat,
+                Size = new Size(150, 34),
+                Location = new Point(16, 330),
+                Cursor = Cursors.Hand
+            };
+            btnAdd.FlatAppearance.BorderSize = 0;
+            btnAdd.Click += (s, e) => { _charges.Add(new SaleCharge { Type = 1 }); _chargesAllocated = false; RenderRows(); };
+            dlg.Controls.Add(btnAdd);
+
+            var btnAllocate = new Button
+            {
+                Text = "⚡ Allocate",
+                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
+                ForeColor = Color.White,
+                BackColor = AccGreen,
+                FlatStyle = FlatStyle.Flat,
+                Size = new Size(150, 34),
+                Location = new Point(180, 330),
+                Cursor = Cursors.Hand
+            };
+            btnAllocate.FlatAppearance.BorderSize = 0;
+            btnAllocate.Click += (s, e) => { AllocateCharges(); RefreshChargesButtonLabel(); };
+            dlg.Controls.Add(btnAllocate);
+
+            var btnDone = new Button
+            {
+                Text = "Done",
+                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
+                ForeColor = TextMuted,
+                BackColor = Color.FromArgb(44, 48, 60),
+                FlatStyle = FlatStyle.Flat,
+                Size = new Size(150, 34),
+                Location = new Point(344, 330),
+                Cursor = Cursors.Hand
+            };
+            btnDone.FlatAppearance.BorderSize = 0;
+            btnDone.Click += (s, e) => dlg.Close();
+            dlg.Controls.Add(btnDone);
+
+            dlg.Controls.Add(new Label
+            {
+                Text = "Fixed → added to Grand Total only.  By Quantity / Equally → distributed across line items on Allocate.",
+                Font = new Font("Segoe UI", 7.5F, FontStyle.Italic),
+                ForeColor = TextMuted,
+                BackColor = Color.Transparent,
+                AutoSize = false,
+                Size = new Size(488, 30),
+                Location = new Point(16, 376)
+            });
+
+            dlg.ShowDialog(this);
+            RefreshChargesButtonLabel();
+        }
+
+        private void AllocateCharges()
+        {
+            if (_charges.Count == 0) { ShowStatus("No charges to allocate.", false); return; }
+
+            foreach (var c in _charges)
+            {
+                if (c.ChargesID <= 0) { ShowStatus("Please select a charge type for every row.", false); return; }
+                if (c.Amount <= 0) { ShowStatus("Please enter a valid amount for every charge.", false); return; }
+            }
+
+            if (_cart.Count == 0 || _cart.All(l => l.Qty <= 0))
+            {
+                ShowStatus("Add items with quantity before allocating charges.", false);
+                return;
+            }
+
+            foreach (var l in _cart) l.Charges = 0m;
+
+            var activeLines = _cart.Where(l => l.Qty > 0).ToList();
+            decimal totalQty = activeLines.Sum(l => l.Qty * GetUnitsPerPackForCartItem(l));
+            int numLines = activeLines.Count;
+
+            foreach (var charge in _charges)
+            {
+                if (charge.Amount <= 0) continue;
+                if (charge.Type == 1) continue; // Fixed — added to Grand Total directly, not lines
+
+                if (charge.Type == 2 && totalQty > 0)
+                {
+                    foreach (var l in activeLines)
+                    {
+                        decimal qty = l.Qty * GetUnitsPerPackForCartItem(l);
+                        l.Charges = Math.Round(l.Charges + (charge.Amount * qty) / totalQty, 2);
+                    }
+                }
+                else if (charge.Type == 3 && numLines > 0)
+                {
+                    decimal share = charge.Amount / numLines;
+                    foreach (var l in activeLines)
+                        l.Charges = Math.Round(l.Charges + share, 2);
+                }
+            }
+
+            _chargesAllocated = true;
+            RefreshCart();
+            UpdateTotals();
+            ShowStatus("✓ Charges allocated.", true);
         }
         // ══════════════════════════════════════════════════════════════════════
         //  ONLINE CHECK
@@ -4024,7 +4353,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 CurrencySymbol = _currencySymbol,
                 Subtotal = _subtotal,
                 DiscountTotal = _cart.Sum(i => i.DiscountAmt),
-                TaxTotal = Math.Round(_subtotal * _taxRate, 2),
+                TaxTotal = _cart.Sum(i => i.TaxAmt),
                 GrandTotal = GrandTotal(),
                 PaidCash = _splitCash,
                 SalesOfficeInfo = _salesOfficeInfo,
@@ -4326,8 +4655,10 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             decimal gross = _cart.Sum(i => i.Price * i.Qty);
             decimal discAmt = _cart.Sum(i => i.DiscountAmt);
             decimal after = gross - discAmt;
-            decimal tax = _taxAlreadyIncluded ? 0m : Math.Round(after * _taxRate, 2);
-            decimal raw = after + tax;
+            decimal tax = _taxAlreadyIncluded ? 0m : _cart.Sum(i => i.TaxAmt);
+            decimal allocatedCharges = _cart.Sum(i => i.Charges);
+            decimal fixedCharges = _charges.Where(c => c.Type == 1).Sum(c => c.Amount);
+            decimal raw = after + tax + allocatedCharges + fixedCharges;
             return RoundGrandTotal(raw);
         }
 
@@ -6015,6 +6346,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 if (qty <= 0) return;
             }
 
+            var defaultTax = _taxMaster.FirstOrDefault(t => t.TaxId == prod.SalesTaxID);
             if (ex != null) ex.Qty = requestedTotalQty;
             else _cart.Add(new CartItem
             {
@@ -6029,7 +6361,10 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 Barcode = prod.Barcode,
                 UOM = resolvedUom,
                 UOMName = availUoms.FirstOrDefault(u => u.UomId == resolvedUom)?.UomDescription ?? "",
-                AvailableUOMs = availUoms
+                AvailableUOMs = availUoms,
+                   TaxId = defaultTax?.TaxId ?? 0,
+                TaxCode = defaultTax?.TaxCode ?? "",
+                TaxPercentage = defaultTax?.TaxPercentage ?? 0m
             });
 
             RefreshCart();
@@ -7233,8 +7568,60 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             tbPrice.BackColor = Color.FromArgb(30, 33, 42);
             tbPrice.ForeColor = TextMuted;
 
-            var tbDisc = AddField("Discount %", item.DiscountPct.ToString("F1"), AccCyan);
+            var tbDisc = AddField("Discount %", item.DiscountPct.ToString("F1"), AccCyan); 
+
             var tbQty = AddField("Quantity", item.Qty.ToString(), AccBlue);
+
+            dlg.Controls.Add(new Label
+            {
+                Text = "Tax",
+                Font = new Font("Segoe UI", 8.5F),
+                ForeColor = TextMuted,
+                BackColor = Color.Transparent,
+                Size = new Size(120, 32),
+                Location = new Point(20, fieldY),
+                TextAlign = ContentAlignment.MiddleLeft
+            });
+
+            var cmbLineTax = new ComboBox
+            {
+                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
+                ForeColor = TextWhite,
+                BackColor = Color.FromArgb(38, 42, 54),
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                FlatStyle = FlatStyle.Flat,
+                Size = new Size(260, 30),
+                Location = new Point(140, fieldY + 1)
+            };
+            cmbLineTax.Items.Add("No Tax");
+            foreach (var t in _taxMaster) cmbLineTax.Items.Add($"{t.TaxCode} ({t.TaxPercentage:F1}%)");
+
+            int curTaxIdx = item.TaxId > 0 ? _taxMaster.FindIndex(t => t.TaxId == item.TaxId) + 1 : 0;
+            cmbLineTax.SelectedIndex = curTaxIdx >= 0 ? curTaxIdx : 0;
+            dlg.Controls.Add(cmbLineTax);
+            fieldY += 42;
+
+            // ── NEW: per-line tax picker ─────────────────────────────────────
+            dlg.Controls.Add(new Label
+            {
+                Text = "Tax",
+                Font = new Font("Segoe UI", 8.5F),
+                ForeColor = TextMuted,
+                BackColor = Color.Transparent,
+                Size = new Size(120, 32),
+                Location = new Point(20, fieldY),
+                TextAlign = ContentAlignment.MiddleLeft
+            });
+             
+            cmbLineTax.Items.Add("No Tax");
+            foreach (var t in _taxMaster)
+                cmbLineTax.Items.Add($"{t.TaxCode} ({t.TaxPercentage:F1}%)");
+
+        
+            cmbLineTax.SelectedIndex = curTaxIdx >= 0 ? curTaxIdx : 0;
+
+            dlg.Controls.Add(cmbLineTax);
+            fieldY += 42;   // keep layout consistent with AddField's spacing
 
             // ── Price Group section (D365 mode only) ─────────────────────────────────
             bool hasGroups = _isD365Mode
@@ -7439,6 +7826,16 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
 
                 if (ok)
                 {
+                    if (cmbLineTax.SelectedIndex <= 0)
+                    {
+                        item.TaxId = 0; item.TaxCode = ""; item.TaxPercentage = 0m;
+                    }
+                    else
+                    {
+                        var t = _taxMaster[cmbLineTax.SelectedIndex - 1];
+                        item.TaxId = t.TaxId; item.TaxCode = t.TaxCode; item.TaxPercentage = t.TaxPercentage;
+                    } 
+
                     RefreshCart();
                     UpdateTotals();
                     dlg.Close();
@@ -7510,21 +7907,20 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
         }
 
         // ══════════════════════════════════════════════════════════════════════
-        //  TOTALS
-        // ══════════════════════════════════════════════════════════════════════
         private void UpdateTotals()
         {
             decimal gross = _cart.Sum(i => i.Price * i.Qty);
             decimal discAmt = _cart.Sum(i => i.DiscountAmt);
             decimal after = gross - discAmt;
-            decimal tax = _taxAlreadyIncluded ? 0m : Math.Round(after * _taxRate, 2);
-            decimal grand = after + tax;
+            decimal tax = _taxAlreadyIncluded ? 0m : _cart.Sum(i => i.TaxAmt);
+            decimal allocatedCharges = _cart.Sum(i => i.Charges);
+            decimal fixedCharges = _charges.Where(c => c.Type == 1).Sum(c => c.Amount);
+            decimal grand = after + tax + allocatedCharges + fixedCharges;
             _subtotal = gross;
 
             lblSubtotalVal.Text = Fmt(gross);
             lblDiscountVal.Text = "- " + Fmt(discAmt);
             lblTaxVal.Text = Fmt(tax);
-            lblGrandTotal.Text = Fmt(grand);
             lblGrandTotal.Text = Fmt(grand);
             lblItemCount.Text = _cart.Sum(i => i.Qty) + " item(s)";
 
@@ -7932,30 +8328,24 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                         continue;
                     }
 
-                    // Per-line tax: skip if this pending invoice already has tax baked in
-                    decimal lineTax = _taxAlreadyIncluded
-                        ? 0m
-                        : Math.Round(item.Total * _taxRate, 2);
-
+                    decimal lineTax = _taxAlreadyIncluded ? 0m : item.TaxAmt;
                     totalLineTax += lineTax;
 
                     int resolvedUom = item.UOM > 0 ? item.UOM : 1;
-
-                    // ── FIX: convert the cart's pack-level Qty into base units using this
-                    //    item's UnitsPerPack for the chosen UOM — mirrors how qtyToReduce is
-                    //    computed for stock, and how GetQueuedOfflineQtyForItem reads it back. ──
                     decimal unitsPerPack = GetUnitsPerPackForCartItem(item);
                     decimal qtyInBaseUnits = item.Qty * unitsPerPack;
 
                     lines.Add(new CreateSOLinePayload
                     {
                         ItemId = itemId,
-                        Qty = qtyInBaseUnits,          // ← was: item.Qty
+                        Qty = qtyInBaseUnits,
                         UOM = resolvedUom,
                         UnitPrice = item.Price,
                         DiscountPercent = item.DiscountPct,
                         DiscountAmount = item.DiscountAmt,
-                        Charges = 0m,
+                        TaxID = item.TaxId,                 // ← FIXED
+                        TaxPercentage = item.TaxPercentage, // ← FIXED
+                        Charges = item.Charges,             // ← wired
                         Tax = lineTax,
                         Total = item.Total
                     });
@@ -7989,7 +8379,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                     SOType = "Sales Order",
                     SODiscountAmt = _cart.Sum(i => i.DiscountAmt),
                     SOTax = totalLineTax,
-                    SOCharges = 0m,
+                    SOCharges = _charges.Sum(c => c.Amount),
                     CurrencyID = _currencyId,
                     SODiscountID = 0,
                     SOTaxID = _selectedTax?.TaxId ?? 0,
@@ -7998,7 +8388,14 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                     Status = "Confirm",
                     WinPos="Y",
                     Lines = lines,
-                    Charges = new List<CreateSOChargePayload>()
+                    Charges = _charges.Select(c => new CreateSOChargePayload
+                    {
+                        ChargesID = c.ChargesID,
+                        Amount = c.Amount,
+                        CurrencyID = _currencyId,
+                        Type = c.Type,
+                        ApplyTo = 2
+                    }).ToList()
                 };
                 _lastOrderQueuedOffline = false;
                 var result = await SalesOrderApi.CreateSalesOrderAsync(payload).ConfigureAwait(true);
@@ -9377,6 +9774,9 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
 
             _cart.Clear();
             _splitCash = 0m; _splitUpi = 0m; _splitCard = 0m; _numpadBuffer = "";
+            _charges.Clear();
+            _chargesAllocated = false;
+            RefreshChargesButtonLabel();
             _selectedUpiMethodName = "Bank Transfer";
             _selectedBankAccount = null;
             _isCreditSale = false;
@@ -9431,6 +9831,8 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             nudDiscount.Value = _defaultDiscountPct;
             RefreshCart();
             UpdateTotals();
+            _chargesAllocated = false;        // ← mark charges as no longer valid
+            RefreshChargesButtonLabel();
 
             if (generateNewInvoiceNo)
                 lblInvoiceNo.Text = _isD365Mode

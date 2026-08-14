@@ -60,6 +60,7 @@ namespace POSAPP
         private int _selectedStoreId;
         private string _companyName = " ";
         private string _currencySymbol = "P";
+        private SalesReturnForm _salesReturnFormInstance;
 
         private List<PaymentSlice> _paymentData;
         private string _paymentTotal;
@@ -74,6 +75,7 @@ namespace POSAPP
         private float _glowAlpha = 0f;
         private bool _glowRising = true;
         private Control _logoControl;
+        private EventHandler _dashboardDataChangedHandler; // adjust the delegate type to match DataChanged's actual signature
 
         private string _companyAddress = "";
         private string _companyPhone = "";
@@ -106,29 +108,7 @@ namespace POSAPP
         private decimal _salesChartMax = 100m;
         private static float EaseOutCubic(float t) => 1f - (float)Math.Pow(1 - t, 3);
 
-        private System.Windows.Forms.Timer AnimateProgress(
-      System.Windows.Forms.Timer existingTimer,
-      Action<float> setProgress,
-      Action invalidate,
-      int durationMs = 1700)
-        {
-            existingTimer?.Stop();
-            existingTimer?.Dispose();
-            setProgress(0f);
-            invalidate();
-
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            var timer = new System.Windows.Forms.Timer { Interval = 33 };
-            timer.Tick += (s, e) =>
-            {
-                float t = Math.Min(1f, sw.ElapsedMilliseconds / (float)durationMs);
-                setProgress(EaseOutCubic(t));
-                invalidate();
-                if (t >= 1f) { timer.Stop(); timer.Dispose(); }
-            };
-            timer.Start();
-            return timer;
-        }
+        
 
         private static readonly Color[] _pieColors =
         {
@@ -175,9 +155,12 @@ namespace POSAPP
             UpdateDateTime();
             btnMaximize_Click(sender, e);
             SetActiveNav(btnNavDashboard);
-
             _clockTimer = new System.Windows.Forms.Timer { Interval = 60_000 };
-            _clockTimer.Tick += (s, _) => UpdateDateTime();
+            _clockTimer.Tick += (s, _) =>
+            {
+                if (this.IsDisposed) return;
+                UpdateDateTime();
+            };
             _clockTimer.Start();
 
             this.Resize += (s, ev) =>
@@ -214,11 +197,20 @@ namespace POSAPP
             await LoadRecentTransactionsAsync();
             await LoadDashboardWidgetsAsync();
 
-            // Inside Form2_Load, after existing setup:
-            _refreshTimer = new System.Windows.Forms.Timer { Interval = 60_000 }; // every 60s
-            _refreshTimer.Tick += async (s, _) => await RefreshDashboardAsync();
+            _refreshTimer = new System.Windows.Forms.Timer { Interval = 60_000 };
+            _refreshTimer.Tick += async (s, _) =>
+            {
+                if (this.IsDisposed) return;
+                await RefreshDashboardAsync();
+            };
             _refreshTimer.Start();
-            DashboardEventBus.DataChanged += async (s, _) => await RefreshDashboardAsync();
+
+            _dashboardDataChangedHandler = async (s, _) =>
+            {
+                if (this.IsDisposed) return;
+                await RefreshDashboardAsync();
+            };
+            DashboardEventBus.DataChanged += _dashboardDataChangedHandler;
         }
         private string FormatAmount(decimal amount)
         {
@@ -308,17 +300,36 @@ namespace POSAPP
                 LoadPendingInvoicesGrid();
             }
         }
+        // ══════════════════════════════════════════════════════════════════
+        // SHOW PAGE — embed forms/panels inside panelContent
+        // ══════════════════════════════════════════════════════════════════
         private void ShowPage(Control page)
         {
-            // Hide / dispose the old page
-            if (_currentPage != null && !_currentPage.IsDisposed)
-            {
-                panelContent.Controls.Remove(_currentPage);
-                if (_currentPage is Form f) { f.Hide(); }
-                else { _currentPage.Dispose(); }
-            }
-            _currentPage = page;
+            // Stop anything that might still touch dashboard-home controls
+            _pieAnimTimer?.Stop();
+            _topProdAnimTimer?.Stop();
+            _statAnimTimer?.Stop();
+            _chartAnimTimer?.Stop();
 
+            // Tear down EVERYTHING currently in panelContent, not just _currentPage
+            panelContent.SuspendLayout();
+            foreach (Control c in panelContent.Controls.Cast<Control>().ToList())
+            {
+                panelContent.Controls.Remove(c);
+                if (c is Form f)
+                    f.Hide();                 // forms are reusable, don't dispose
+                else if (!c.IsDisposed)
+                    c.Dispose();              // dashboard-home panel & children
+            }
+            panelContent.ResumeLayout();
+
+            // Null out ALL home-panel fields so any in-flight async callback bails out safely
+            _payCard = null;
+            _paymentPanel = null;
+            _topProductsPanel = null;
+            _statCards = new BufferedPanel[4];
+
+            _currentPage = page;
             if (page == null) { ShowDashboardHome(); return; }
 
             if (page is Form form)
@@ -334,9 +345,80 @@ namespace POSAPP
             }
 
             panelContent.Controls.Add(page);
-            panelContent.Controls.SetChildIndex(page, 0);
             page.Show();
             page.BringToFront();
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        // SAFE INVALIDATE HELPER
+        // ══════════════════════════════════════════════════════════════════
+        private void SafeInvalidate(Action invalidate)
+        {
+            if (this.IsDisposed) return;
+            try { invalidate(); }
+            catch (ObjectDisposedException) { /* control torn down mid-transition, ignore */ }
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        // ANIMATE PROGRESS — now disposal-safe
+        // ══════════════════════════════════════════════════════════════════
+        private System.Windows.Forms.Timer AnimateProgress(
+            System.Windows.Forms.Timer existingTimer,
+            Action<float> setProgress,
+            Action invalidate,
+            int durationMs = 1700)
+        {
+            existingTimer?.Stop();
+            existingTimer?.Dispose();
+            setProgress(0f);
+            SafeInvalidate(invalidate);
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var timer = new System.Windows.Forms.Timer { Interval = 33 };
+            timer.Tick += (s, e) =>
+            {
+                if (this.IsDisposed) { timer.Stop(); timer.Dispose(); return; }
+
+                float t = Math.Min(1f, sw.ElapsedMilliseconds / (float)durationMs);
+                setProgress(EaseOutCubic(t));
+                SafeInvalidate(invalidate);
+                if (t >= 1f) { timer.Stop(); timer.Dispose(); }
+            };
+            timer.Start();
+            return timer;
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        // REFRESH DASHBOARD — bail out if a page (not home) is currently showing
+        // ══════════════════════════════════════════════════════════════════
+        public async Task RefreshDashboardAsync()
+        {
+            if (this.IsDisposed || _currentPage != null) return; // don't touch dashboard-home widgets while a page is open
+
+            try
+            {
+                string sym = _currencySymbol ?? "P";
+                await Task.Run(() => LoadPaymentMethodData(sym));
+
+                if (this.IsDisposed || _currentPage != null) return; // re-check after await
+
+                await LoadDashboardWidgetsAsync();
+
+                if (this.IsDisposed || _currentPage != null) return;
+
+                var (salesVals, salesLabels) = await Task.Run(() => LoadSalesOverviewData());
+                _salesChartVals = salesVals;
+                _salesChartLabels = salesLabels;
+                _salesChartMax = Math.Max(10m, _salesChartVals.Max() * 1.15m);
+
+                if (this.IsDisposed || _currentPage != null) return;
+
+                await LoadRecentTransactionsAsync();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("RefreshDashboardAsync Error: " + ex.Message);
+            }
         }
 
         private void ShowDashboardHome()
@@ -349,26 +431,7 @@ namespace POSAPP
             _ = LoadRecentTransactionsAsync();
             SetActiveNav(btnNavDashboard);
         }
-        public async Task RefreshDashboardAsync()
-        {
-            try
-            {
-                string sym = _currencySymbol ?? "P";
-                await Task.Run(() => LoadPaymentMethodData(sym));
-                await LoadDashboardWidgetsAsync();
-
-                var (salesVals, salesLabels) = await Task.Run(() => LoadSalesOverviewData());
-                _salesChartVals = salesVals;
-                _salesChartLabels = salesLabels;
-                _salesChartMax = Math.Max(10m, _salesChartVals.Max() * 1.15m);
-
-                await LoadRecentTransactionsAsync();
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine("RefreshDashboardAsync Error: " + ex.Message);
-            }
-        }
+         
 
         // Helper to safely call RebuildInner
         // Remove the call to RebuildInnerIfExists from RefreshDashboardAsync (already done above)
@@ -411,11 +474,24 @@ namespace POSAPP
         // ── Sales Return ──────────────────────────────────────────────────
         private void btnNavSalesReturn_Click(object sender, EventArgs e)
         {
+            if (_selectedCompanyId <= 0)
+            {
+                MessageBox.Show("Please select a company before opening Sales Return.",
+                    "No Company Selected", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
             SetActiveNav(btnNavSalesReturn);
-            ShowPage(new SalesReturnForm(
-                _selectedCompanyId, _currencySymbol, _companyName,
-                _companyAddress ?? "", _companyPhone ?? "",
-                _companyVat ?? "", _companyWebsite ?? "", _salesOfficeInfo ?? ""));
+
+            if (_salesReturnFormInstance == null || _salesReturnFormInstance.IsDisposed)
+            {
+                _salesReturnFormInstance = new SalesReturnForm(
+                    _selectedCompanyId, _currencySymbol, _companyName,
+                    _companyAddress ?? "", _companyPhone ?? "",
+                    _companyVat ?? "", _companyWebsite ?? "", _salesOfficeInfo ?? "");
+            }
+
+            ShowPage(_salesReturnFormInstance);
         }
 
         // ── Pending Invoices ──────────────────────────────────────────────
@@ -689,6 +765,8 @@ namespace POSAPP
                                            : C_Offline;
             void Apply()
             {
+                if (_statusDot == null || _statusDot.IsDisposed ||
+        _statusLabel == null || _statusLabel.IsDisposed) return;
                 if (_statusDot == null || _statusLabel == null) return;
                 _statusDot.BackColor = dotColor;
                 _statusLabel.Text = message;
@@ -702,6 +780,8 @@ namespace POSAPP
                 }
                 if (online.HasValue) PulseDot();
             }
+            if (IsDisposed) return;
+            if (InvokeRequired) Invoke((Action)Apply); else Apply();
             if (InvokeRequired) Invoke((Action)Apply); else Apply();
         }
 
@@ -1235,9 +1315,10 @@ namespace POSAPP
 
             void RepaintPay()
             {
+                if (this.IsDisposed || _currentPage != null) return;
                 _pieAnimTimer = AnimateProgress(_pieAnimTimer, v => _pieAnimProgress = v,
-    () => { _payCard?.Invalidate(); _paymentPanel?.Invalidate(); },
-    durationMs: 1700);
+                    () => { _payCard?.Invalidate(); _paymentPanel?.Invalidate(); },
+                    durationMs: 1700);
             }
             if (InvokeRequired) BeginInvoke((Action)RepaintPay);
             else RepaintPay();
@@ -1578,6 +1659,8 @@ namespace POSAPP
         // ══════════════════════════════════════════════════════════════════
         private async Task LoadDashboardWidgetsAsync()
         {
+            if (this.IsDisposed || _currentPage != null) return;
+
             try
             {
                 var (topProds, lowStock) = await Task.Run(() =>
@@ -1590,10 +1673,14 @@ namespace POSAPP
                     return (tp, ls);
                 });
 
+                if (this.IsDisposed || _currentPage != null) return;
+
                 string sym = _currencySymbol ?? "P";
                 foreach (var prod in topProds) prod.PriceFormatted = $"{sym} {prod.UnitPrice:N2}";
 
-                var stats = await LoadDashboardStatsAsync();   // ← was: computed inside ApplyWidgetData
+                var stats = await LoadDashboardStatsAsync();
+
+                if (this.IsDisposed || _currentPage != null) return;
 
                 if (InvokeRequired) Invoke((Action)(() => ApplyWidgetData(topProds, lowStock, stats)));
                 else ApplyWidgetData(topProds, lowStock, stats);
@@ -1604,8 +1691,10 @@ namespace POSAPP
         private void ApplyWidgetData(
             List<TopSellingProductDto> topProds,
             List<LowStockAlertDto> lowStock,
-            (decimal salesToday, int orderCount, int unpaidCount, decimal returnsTotal) stats)   // ← new param
+            (decimal salesToday, int orderCount, int unpaidCount, decimal returnsTotal) stats)
         {
+            if (this.IsDisposed || _currentPage != null || _statCards == null || panelContent.IsDisposed) return;
+
             _topProductsData = topProds ?? new List<TopSellingProductDto>();
             _lowStockData = lowStock ?? new List<LowStockAlertDto>();
 
@@ -1613,7 +1702,7 @@ namespace POSAPP
             foreach (var prod in topProds)
                 prod.PriceFormatted = $"{sym} {prod.UnitPrice.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)}";
 
-            _dashStats = stats;   // ← was: _dashStats = LoadDashboardStats();
+            _dashStats = stats;
 
             _statAnimTimer = AnimateProgress(_statAnimTimer, v => _statAnimProgress = v,
                 () => { if (_statCards != null) foreach (var sc in _statCards) sc?.Invalidate(); },
@@ -1625,6 +1714,7 @@ namespace POSAPP
             _payCard?.Invalidate();
             _paymentPanel?.Invalidate();
         }
+         
 
         private void btnNavPurchaseOrder_Click(object sender, EventArgs e)
         {
@@ -1723,8 +1813,10 @@ namespace POSAPP
         }
 
      protected override void OnFormClosed(FormClosedEventArgs e)
-{
-    _clockTimer?.Stop(); _clockTimer?.Dispose();
+        {
+            if (_dashboardDataChangedHandler != null)
+                DashboardEventBus.DataChanged -= _dashboardDataChangedHandler;
+            _clockTimer?.Stop(); _clockTimer?.Dispose();
     _refreshTimer?.Stop(); _refreshTimer?.Dispose();
     _pieAnimTimer?.Stop(); _pieAnimTimer?.Dispose();
     _topProdAnimTimer?.Stop(); _topProdAnimTimer?.Dispose();

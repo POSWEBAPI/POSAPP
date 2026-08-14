@@ -50,25 +50,25 @@ namespace POSAPP.Sales
     // ════════════════════════════════════════════════════════════════════════
     public class SalesReturnForm : Form
     {
-        // ── Palette (BLACK / GREEN dark theme) ─────────────────────────────
-        private static readonly Color BgPage = Color.FromArgb(16, 18, 16);
-        private static readonly Color PanelWhite = Color.FromArgb(24, 27, 24);      // card / panel background
-        private static readonly Color PanelAlt = Color.FromArgb(30, 34, 30);        // alt row / hover background
-        private static readonly Color BorderColor = Color.FromArgb(45, 58, 45);
-        private static readonly Color TextDark = Color.FromArgb(230, 245, 230);     // primary text (near-white/green tint)
-        private static readonly Color TextMid = Color.FromArgb(150, 175, 150);
-        private static readonly Color TextLight = Color.FromArgb(105, 130, 105);
-        private static readonly Color AccentBlue = Color.FromArgb(57, 214, 116);    // primary accent -> green
-        private static readonly Color AccentBlueLight = Color.FromArgb(20, 60, 34); // accent-tinted background
-        private static readonly Color AccGreen = Color.FromArgb(57, 214, 116);
-        private static readonly Color AccGreenLight = Color.FromArgb(20, 60, 34);
-        private static readonly Color AccRed = Color.FromArgb(239, 83, 80);
-        private static readonly Color AccRedLight = Color.FromArgb(60, 24, 24);
-        private static readonly Color AccAmber = Color.FromArgb(240, 180, 60);
-        private static readonly Color RowHoverBg = Color.FromArgb(28, 32, 28);
-        private static readonly Color RowSelectedBg = Color.FromArgb(18, 46, 28);
-        private static readonly Color InputBg = Color.FromArgb(20, 23, 20);
-        private static readonly Color InputBorder = Color.FromArgb(60, 90, 60);
+        // ── Palette (LIGHT / TEAL theme — matches the "Return Wizard" reference) ──
+        private static readonly Color BgPage = Color.FromArgb(247, 245, 240);       // warm off-white page background
+        private static readonly Color PanelWhite = Color.FromArgb(255, 255, 255);   // card / panel background
+        private static readonly Color PanelAlt = Color.FromArgb(244, 244, 240);     // alt row / hover background
+        private static readonly Color BorderColor = Color.FromArgb(226, 224, 216);
+        private static readonly Color TextDark = Color.FromArgb(31, 41, 38);        // primary text (near-black, cool tint)
+        private static readonly Color TextMid = Color.FromArgb(110, 122, 116);
+        private static readonly Color TextLight = Color.FromArgb(160, 170, 164);
+        private static readonly Color AccentBlue = Color.FromArgb(45, 149, 130);    // primary accent -> teal
+        private static readonly Color AccentBlueLight = Color.FromArgb(222, 241, 236); // accent-tinted background
+        private static readonly Color AccGreen = Color.FromArgb(45, 149, 130);
+        private static readonly Color AccGreenLight = Color.FromArgb(222, 241, 236);
+        private static readonly Color AccRed = Color.FromArgb(214, 69, 69);
+        private static readonly Color AccRedLight = Color.FromArgb(252, 231, 231);
+        private static readonly Color AccAmber = Color.FromArgb(214, 130, 30);
+        private static readonly Color RowHoverBg = Color.FromArgb(248, 247, 243);
+        private static readonly Color RowSelectedBg = Color.FromArgb(222, 241, 236);
+        private static readonly Color InputBg = Color.FromArgb(250, 250, 248);
+        private static readonly Color InputBorder = Color.FromArgb(210, 214, 206);
 
         // ── Reason / Disposition option lists ───────────────────────────────
         private static readonly string[] ReturnReasonOptions =
@@ -164,7 +164,7 @@ namespace POSAPP.Sales
         private Label lblRefundTotalFooter;
 
         private const int HEADER_H = 52;
-        private const int CARD_RADIUS = 10;
+        private const int CARD_RADIUS = 14;
         private const int CARD_PAD = 20;   // inner padding used consistently for card content placement
 
         // ══════════════════════════════════════════════════════════════════
@@ -387,7 +387,7 @@ namespace POSAPP.Sales
                 Location = new Point(16, 12)
             };
 
-          
+
 
             txtOrderSearch = new TextBox
             {
@@ -420,12 +420,12 @@ namespace POSAPP.Sales
 
             // Position the refresh button once we know the caption's width so the
             // two never sit on top of each other even with long localized captions.
-           
+
 
             pnlListHeader.Controls.Add(lblOrdersCap);
-          
+
             pnlListHeader.Controls.Add(txtOrderSearch);
-            pnlListHeader.Controls.Add(cmbCustomerFilter); 
+            pnlListHeader.Controls.Add(cmbCustomerFilter);
 
             // Auto-refresh whenever the window regains focus, so stale data doesn't linger.
             this.Activated += async (s, e) => await LoadAllOrdersAsync();
@@ -721,7 +721,7 @@ namespace POSAPP.Sales
             btnPdfPrint = MakeToolbarBtn("PDF/Print", 0);
             btnCreateMenu = MakeToolbarBtn("Create ▾", 0);
             btnCreateMenu.BackColor = AccGreen;
-            btnCreateMenu.ForeColor = Color.Black;
+            btnCreateMenu.ForeColor = Color.White;
 
             btnEdit.Click += (s, e) => ShowBuilderStatusToast("Edit isn't available from the return screen.", false);
             btnEmail.Click += (s, e) => ShowBuilderStatusToast("Email isn't available from the return screen.", false);
@@ -784,7 +784,7 @@ namespace POSAPP.Sales
                 Text = "Cancel",
                 Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
                 ForeColor = TextMid,
-                BackColor = Color.FromArgb(34, 38, 34),
+                BackColor = Color.FromArgb(238, 237, 231),
                 FlatStyle = FlatStyle.Flat,
                 Size = new Size(90, 36),
                 Anchor = AnchorStyles.Top | AnchorStyles.Right,
@@ -798,7 +798,7 @@ namespace POSAPP.Sales
             {
                 Text = "Process Return",
                 Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
-                ForeColor = Color.Black,
+                ForeColor = Color.White,
                 BackColor = AccGreen,
                 FlatStyle = FlatStyle.Flat,
                 Size = new Size(160, 36),
@@ -843,7 +843,7 @@ namespace POSAPP.Sales
                 Text = text,
                 Font = new Font("Segoe UI", 9F, FontStyle.Bold),
                 ForeColor = TextMid,
-                BackColor = Color.FromArgb(34, 38, 34),
+                BackColor = Color.FromArgb(238, 237, 231),
                 FlatStyle = FlatStyle.Flat,
                 AutoSize = true,
                 Padding = new Padding(10, 4, 10, 4),
@@ -1287,17 +1287,19 @@ namespace POSAPP.Sales
             cmbDisposition = MkCombo(DispositionOptions, 158);
             cmbDisposition.SelectedIndexChanged += (s, e) => _dispositionCode = cmbDisposition.SelectedItem?.ToString() ?? "";
 
+            // Refund Method — only Cash is offered.
             var lblMethod = MkFieldLabel("Refund Method", 198);
             btnMethodCash = new Button
             {
                 Text = "Cash",
                 Font = new Font("Segoe UI", 9F, FontStyle.Bold),
-                ForeColor = Color.Black,
+                ForeColor = Color.White,
                 BackColor = AccGreen,
                 FlatStyle = FlatStyle.Flat,
                 Size = new Size(90, 32),
                 Location = new Point(0, 216),
-                Cursor = Cursors.Hand
+                Cursor = Cursors.Hand,
+                Enabled = false // only option — shown as the fixed selected method
             };
             btnMethodCash.FlatAppearance.BorderSize = 0;
             btnMethodCash.Region = MakeRoundedRegion(btnMethodCash.Size, 6);
@@ -1543,7 +1545,7 @@ namespace POSAPP.Sales
                 {
                     btnAction.Text = "Add to Return";
                     btnAction.BackColor = AccGreen;
-                    btnAction.ForeColor = Color.Black;
+                    btnAction.ForeColor = Color.White;
                 }
             }
             RefreshActionButton();
@@ -1676,8 +1678,8 @@ namespace POSAPP.Sales
         private new void SetRefundMethod(string method)
         {
             _refundMethod = method;
-            btnMethodCash.BackColor = method == "cash" ? AccGreen : Color.FromArgb(34, 38, 34);
-            btnMethodCash.ForeColor = method == "cash" ? Color.Black : TextMid;
+            btnMethodCash.BackColor = AccGreen;
+            btnMethodCash.ForeColor = Color.White;
         }
 
         private void RecalcTotal()
@@ -2151,13 +2153,8 @@ namespace POSAPP.Sales
 
         private string RefundMethodLabel(string m = null)
         {
-            switch (m ?? _refundMethod)
-            {
-                case "cash": return "Cash";
-                case "upi": return "UPI / Digital";
-                case "bank": return "Bank Transfer";
-                default: return "Cash";
-            }
+            // Only Cash is supported as a refund method.
+            return "Cash";
         }
 
         private void ShowBuilderStatusToast(string msg, bool ok)

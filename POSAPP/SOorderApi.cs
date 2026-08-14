@@ -107,6 +107,14 @@ namespace POSAPP.Payment
         [JsonPropertyName("charges")] public decimal Charges { get; set; }
         [JsonPropertyName("tax")] public decimal Tax { get; set; }
         [JsonPropertyName("total")] public decimal Total { get; set; }
+        [JsonPropertyName("taxID")] public int TaxID { get; set; }              // ← ADD
+        [JsonPropertyName("taxPercentage")] public decimal TaxPercentage { get; set; } // 
+
+    }
+    public class ChargeDto
+    {
+        [JsonPropertyName("chargesID")] public int ChargesID { get; set; }
+        [JsonPropertyName("chargesName")] public string ChargesName { get; set; } = "";
     }
 
     public class CreateSOChargePayload
