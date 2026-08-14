@@ -90,12 +90,30 @@ namespace POSAPP
         static GraphicsPath RoundRect(Rectangle r, int radius)
         {
             var path = new GraphicsPath();
+
+            if (r.Width <= 0 || r.Height <= 0)
+                return path;
+
+            // Prevent radius from being larger than the rectangle.
+            int maxRadius = Math.Min(r.Width, r.Height) / 2;
+            radius = Math.Max(0, Math.Min(radius, maxRadius));
+
+            // No rounding required.
+            if (radius <= 0)
+            {
+                path.AddRectangle(r);
+                return path;
+            }
+
             int d = radius * 2;
+
             path.AddArc(r.X, r.Y, d, d, 180, 90);
             path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
             path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
             path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+
             path.CloseFigure();
+
             return path;
         }
 
@@ -695,8 +713,8 @@ namespace POSAPP
                 RowCount = 1,
                 BackColor = Color.Transparent
             };
-            bottomRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
-            bottomRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 26f));
+            bottomRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 48f));
+            bottomRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 28f));
             bottomRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 24f));
             bottomRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
@@ -1303,41 +1321,50 @@ namespace POSAPP
         {
             card.Paint += (s, e) =>
             {
-                e.Graphics.DrawString("Quick Actions", F_H2, new SolidBrush(C_Navy), new PointF(16, 16));
+                var g = e.Graphics;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+
+                g.DrawString(
+                    "Quick Actions",
+                    F_H2,
+                    new SolidBrush(C_Navy),
+                    new PointF(16, 16));
             };
 
             var actions = new[]
             {
-                new { Icon="🛒", Lbl="New Sale", Clr=C_Blue,   Bg=Color.FromArgb(222,235,255) },
-                new { Icon="📊", Lbl="Reports",  Clr=C_Green,  Bg=Color.FromArgb(214,248,232) },
-                new { Icon="💰", Lbl="Payment",  Clr=C_Pink,   Bg=Color.FromArgb(252,222,238) },
-                new { Icon="↩",  Lbl="Return",   Clr=C_Red,    Bg=Color.FromArgb(255,222,222) },
-            };
+        new { Icon = "🛒", Lbl = "New Sale", Clr = C_Blue,   Bg = Color.FromArgb(222, 235, 255) },
+        new { Icon = "📊", Lbl = "Reports",  Clr = C_Green,  Bg = Color.FromArgb(214, 248, 232) },
+        new { Icon = "💰", Lbl = "Payment",  Clr = C_Pink,   Bg = Color.FromArgb(252, 222, 238) },
+        new { Icon = "↩",  Lbl = "Return",   Clr = C_Red,    Bg = Color.FromArgb(255, 222, 222) },
+    };
 
             const int cols = 2;
             const int rows = 2;
-            const int gap = 12;
+            const int gap = 10;
 
-            // 2x2 grid via TableLayoutPanel with equal percent cells, instead
-            // of manually computed button width/position. Dock=Fill + card.Padding
-            // (rather than Anchor against `card`'s not-yet-final size) keeps this
-            // correct on every layout pass regardless of when it's populated.
-            card.Padding = new Padding(16, 60, 16, 16);
+            card.Padding = new Padding(14, 54, 14, 14);
+
             var grid = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = cols,
                 RowCount = rows,
-                BackColor = Color.Transparent
+                BackColor = Color.Transparent,
+                Margin = Padding.Empty,
+                Padding = Padding.Empty
             };
-            for (int c = 0; c < cols; c++)
-                grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / cols));
-            for (int r = 0; r < rows; r++)
-                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100f / rows));
+
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
+
+            grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50f));
+            grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50f));
 
             for (int i = 0; i < actions.Length; i++)
             {
                 var a = actions[i];
+
                 int col = i % cols;
                 int row = i / cols;
 
@@ -1345,53 +1372,194 @@ namespace POSAPP
                 {
                     Dock = DockStyle.Fill,
                     Margin = new Padding(
-                        col == 0 ? 0 : gap / 2, row == 0 ? 0 : gap / 2,
-                        col == cols - 1 ? 0 : gap / 2, row == rows - 1 ? 0 : gap / 2),
+                        col == 0 ? 0 : gap / 2,
+                        row == 0 ? 0 : gap / 2,
+                        col == cols - 1 ? 0 : gap / 2,
+                        row == rows - 1 ? 0 : gap / 2),
+
                     FlatStyle = FlatStyle.Flat,
                     BackColor = a.Bg,
                     ForeColor = C_Navy,
                     Cursor = Cursors.Hand,
-                    Text = ""
+                    Text = "",
+                    TabStop = false,
+                    UseVisualStyleBackColor = false
                 };
+
                 btn.FlatAppearance.BorderSize = 0;
                 btn.FlatAppearance.MouseOverBackColor = Color.FromArgb(
-                    Math.Max(0, a.Bg.R - 16), Math.Max(0, a.Bg.G - 16), Math.Max(0, a.Bg.B - 16));
-                // Rounded-corner Region is recalculated on resize since the
-                // button's actual size now depends on the live grid cell size.
-                void ApplyRegion() => btn.Region = new Region(RoundRect(new Rectangle(0, 0, btn.Width, btn.Height), 14));
-                ApplyRegion();
-                btn.Resize += (s, e2) => ApplyRegion();
-                btn.Paint += (s, e2) =>
+                    Math.Max(0, a.Bg.R - 10),
+                    Math.Max(0, a.Bg.G - 10),
+                    Math.Max(0, a.Bg.B - 10));
+
+                // Rounded corners
+                void ApplyRegion()
                 {
-                    var g = e2.Graphics;
+                    if (btn.Width < 2 || btn.Height < 2)
+                        return;
+
+                    btn.Region?.Dispose();
+
+                    int radius = Math.Min(
+                        12,
+                        Math.Min(btn.Width, btn.Height) / 4);
+
+                    if (radius <= 0)
+                        return;
+
+                    using var path = RoundRect(
+                        new Rectangle(0, 0, btn.Width - 1, btn.Height - 1),
+                        radius);
+
+                    btn.Region = new Region(path);
+                }
+
+                btn.Resize += (s, e) => ApplyRegion();
+                ApplyRegion();
+
+                btn.Paint += (s, e) =>
+                {
+                    var g = e.Graphics;
                     g.SmoothingMode = SmoothingMode.AntiAlias;
+                    g.TextRenderingHint =
+                        System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
 
-                    // White rounded square icon badge with colored icon
-                    var iconRc = new Rectangle(btn.Width / 2 - 22, 14, 44, 44);
-                    using var iconBgPath = RoundRect(iconRc, 12);
-                    g.FillPath(new SolidBrush(Color.White), iconBgPath);
-                    using var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-                    g.DrawString(a.Icon, new Font("Segoe UI Emoji", 17F), new SolidBrush(a.Clr), iconRc, sf);
+                    int w = btn.ClientSize.Width;
+                    int h = btn.ClientSize.Height;
 
-                    // Bold label below
-                    g.DrawString(a.Lbl, new Font("Segoe UI", 10F, FontStyle.Bold), new SolidBrush(C_Navy),
-                        new RectangleF(0, 64, btn.Width, 24), sf);
+                    if (w <= 10 || h <= 10)
+                        return;
+
+                    // ─────────────────────────────────────────────
+                    // Responsive sizing
+                    // ─────────────────────────────────────────────
+
+                    // Icon badge scales with available button size.
+                    int badgeSize = Math.Min(
+                        42,
+                        Math.Max(30, Math.Min(w - 18, h / 3)));
+
+                    int badgeX = (w - badgeSize) / 2;
+
+                    // Keep everything centered vertically.
+                    int totalContentHeight =
+                        badgeSize + 8 + 20;
+
+                    int startY = Math.Max(
+                        8,
+                        (h - totalContentHeight) / 2);
+
+                    // ─────────────────────────────────────────────
+                    // Icon background
+                    // ─────────────────────────────────────────────
+
+                    var iconRc = new Rectangle(
+                        badgeX,
+                        startY,
+                        badgeSize,
+                        badgeSize);
+
+                    int iconRadius = Math.Min(11, badgeSize / 3);
+
+                    using (var iconPath = RoundRect(
+                        iconRc,
+                        iconRadius))
+                    using (var iconBg = new SolidBrush(Color.White))
+                    {
+                        g.FillPath(iconBg, iconPath);
+                    }
+
+                    // ─────────────────────────────────────────────
+                    // Icon
+                    // ─────────────────────────────────────────────
+
+                    float iconFontSize = Math.Max(
+                        12f,
+                        Math.Min(17f, badgeSize * 0.40f));
+
+                    using var iconFont =
+                        new Font("Segoe UI Emoji", iconFontSize);
+
+                    using var iconSf = new StringFormat
+                    {
+                        Alignment = StringAlignment.Center,
+                        LineAlignment = StringAlignment.Center
+                    };
+
+                    g.DrawString(
+                        a.Icon,
+                        iconFont,
+                        new SolidBrush(a.Clr),
+                        iconRc,
+                        iconSf);
+
+                    // ─────────────────────────────────────────────
+                    // Label
+                    // ─────────────────────────────────────────────
+
+                    int labelY = startY + badgeSize + 7;
+
+                    using var labelFont =
+                        new Font(
+                            "Segoe UI",
+                            8.5F,
+                            FontStyle.Bold);
+
+                    using var labelSf = new StringFormat
+                    {
+                        Alignment = StringAlignment.Center,
+                        LineAlignment = StringAlignment.Center,
+                        Trimming = StringTrimming.EllipsisCharacter,
+                        FormatFlags = StringFormatFlags.NoWrap
+                    };
+
+                    var labelRc = new RectangleF(
+                        6,
+                        labelY,
+                        w - 12,
+                        20);
+
+                    g.DrawString(
+                        a.Lbl,
+                        labelFont,
+                        new SolidBrush(C_Navy),
+                        labelRc,
+                        labelSf);
                 };
 
+                // ─────────────────────────────────────────────
+                // Actions
+                // ─────────────────────────────────────────────
+
                 if (a.Lbl == "New Sale")
+                {
                     btn.Click += (s, e2) =>
                     {
                         SetActiveNav(btnNavSales);
-                        ShowPage(new SalesForm(_selectedCompanyId));
+
+                        ShowPage(
+                            new SalesForm(_selectedCompanyId));
                     };
+                }
+
                 if (a.Lbl == "Return")
+                {
                     btn.Click += (s, e2) =>
                     {
                         SetActiveNav(btnNavSalesReturn);
-                        ShowPage(new SalesReturnForm(_selectedCompanyId, _currencySymbol));
+
+                        ShowPage(
+                            new SalesReturnForm(
+                                _selectedCompanyId,
+                                _currencySymbol));
                     };
+                }
+
                 if (a.Lbl == "Reports")
-                    btn.Click += (s, e2) => ShowReportsPopup();
+                {
+                    btn.Click += (s, e2) =>
+                        ShowReportsPopup();
+                }
 
                 grid.Controls.Add(btn, col, row);
             }
