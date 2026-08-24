@@ -129,7 +129,7 @@ namespace POSAPP.Invoice
 
     public static partial class SalesReturnRepository
     {
-        public static async Task<List<CustomerLite>> SearchCustomersAsync(string query, int companyId)
+        public static async Task<List<CustomerLite>> SearchCustomersAsync(int companyId)
         {
             var list = new List<CustomerLite>();
             try
@@ -143,8 +143,6 @@ namespace POSAPP.Invoice
 
                     if (string.IsNullOrWhiteSpace(name)) continue;
                     if (companyId != 0 && compId != 0 && compId != companyId) continue;
-                    if (!string.IsNullOrWhiteSpace(query) &&
-                        name.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0) continue;
 
                     list.Add(new CustomerLite { CustomerId = id, CustomerName = name });
                 }

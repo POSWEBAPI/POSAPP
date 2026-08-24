@@ -277,7 +277,7 @@ namespace POSAPP
                 ControlStyles.DoubleBuffer, true);
             this.UpdateStyles();
             _barcodeTimer = new System.Windows.Forms.Timer { Interval = 120 };
-            _barcodeTimer.Tick += BarcodeTimer_Tick;
+            //_barcodeTimer.Tick += BarcodeTimer_Tick;
         }
         public SalesForm() : this(0) { }
 
@@ -348,13 +348,13 @@ namespace POSAPP
 
             txtSearch.TextChanged += TxtSearch_TextChanged;
             txtSearch.KeyDown += TxtSearch_KeyDown;
-            txtBarcode.KeyDown += TxtBarcode_KeyDown;
-            txtBarcode.KeyPress += TxtBarcode_KeyPress;
+            //txtBarcode.KeyDown += TxtBarcode_KeyDown;
+            //txtBarcode.KeyPress += TxtBarcode_KeyPress;
             txtCustomer.TextChanged += TxtCustomer_TextChanged;
             txtCustomer.KeyDown += TxtCustomer_KeyDown;
 
             ApplyModernStyle(txtSearch, "Search products…", AccBlue, out _searchWrapper);
-            ApplyModernStyle(txtBarcode, "Scan barcode…", AccCyan, out _barcodeWrapper);
+            //ApplyModernStyle(txtBarcode, "Scan barcode…", AccCyan, out _barcodeWrapper);
             ApplyModernStyle(txtCustomer, "Search customer…", AccPurple, out _customerWrapper);
             _ = LoadStockCacheAsync();
             _ = LoadUomMasterAsync();
@@ -3751,7 +3751,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             }
 
             txtSearch.Enabled = false;
-            txtBarcode.Enabled = false;
+            //txtBarcode.Enabled = false;
             panelHotItems.Enabled = false;
             panelHotItems.BackColor = Color.FromArgb(28, 32, 40);
             if (nudDiscount != null) nudDiscount.Enabled = false;
@@ -5982,20 +5982,20 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
         // ══════════════════════════════════════════════════════════════════════
         //  BARCODE
         // ══════════════════════════════════════════════════════════════════════
-        private void TxtBarcode_KeyDown(object sender, KeyEventArgs e)
-        {
-            if (e.KeyCode == Keys.Enter)
-            {
-                string code = GetRealText(txtBarcode);
-                if (code.Length > 0)
-                {
-                    ProcessBarcode(code);
-                    txtBarcode.ForeColor = TextMuted;
-                    txtBarcode.Text = "📷  Scan barcode…";
-                }
-                e.Handled = true; e.SuppressKeyPress = true;
-            }
-        }
+        //private void TxtBarcode_KeyDown(object sender, KeyEventArgs e)
+        //{
+        //    if (e.KeyCode == Keys.Enter)
+        //    {
+        //        string code = GetRealText(txtBarcode);
+        //        if (code.Length > 0)
+        //        {
+        //            ProcessBarcode(code);
+        //            //txtBarcode.ForeColor = TextMuted;
+        //            //txtBarcode.Text = "📷  Scan barcode…";
+        //        }
+        //        e.Handled = true; e.SuppressKeyPress = true;
+        //    }
+        //}
 
         private void TxtBarcode_KeyPress(object sender, KeyPressEventArgs e)
         {
@@ -6003,46 +6003,46 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 e.Handled = true;
         }
 
-        protected override void OnKeyPress(KeyPressEventArgs e)
-        {
-            if (txtSearch.Focused || txtCustomer.Focused || txtBarcode.Focused)
-            { base.OnKeyPress(e); return; }
+        //protected override void OnKeyPress(KeyPressEventArgs e)
+        //{
+        //    if (txtSearch.Focused || txtCustomer.Focused || txtBarcode.Focused)
+        //    { base.OnKeyPress(e); return; }
 
-            char c = e.KeyChar;
-            if (c == '\r' || c == '\n')
-            {
-                _barcodeTimer.Stop();
-                if (_barcodeBuffer.Length > 0)
-                {
-                    ProcessBarcode(_barcodeBuffer);
-                    txtBarcode.ForeColor = TextMuted;
-                    txtBarcode.Text = "📷  Scan barcode…";
-                    _barcodeBuffer = "";
-                }
-                e.Handled = true; return;
-            }
-            if (char.IsLetterOrDigit(c) || c == '-')
-            {
-                _barcodeBuffer += c;
-                _barcodeTimer.Stop(); _barcodeTimer.Start();
-                if (txtBarcode.ForeColor != TextWhite) txtBarcode.ForeColor = TextWhite;
-                txtBarcode.Text = _barcodeBuffer;
-                e.Handled = true;
-            }
-            base.OnKeyPress(e);
-        }
+        //    char c = e.KeyChar;
+        //    if (c == '\r' || c == '\n')
+        //    {
+        //        _barcodeTimer.Stop();
+        //        if (_barcodeBuffer.Length > 0)
+        //        {
+        //            ProcessBarcode(_barcodeBuffer);
+        //            txtBarcode.ForeColor = TextMuted;
+        //            txtBarcode.Text = "📷  Scan barcode…";
+        //            _barcodeBuffer = "";
+        //        }
+        //        e.Handled = true; return;
+        //    }
+        //    if (char.IsLetterOrDigit(c) || c == '-')
+        //    {
+        //        _barcodeBuffer += c;
+        //        _barcodeTimer.Stop(); _barcodeTimer.Start();
+        //        if (txtBarcode.ForeColor != TextWhite) txtBarcode.ForeColor = TextWhite;
+        //        txtBarcode.Text = _barcodeBuffer;
+        //        e.Handled = true;
+        //    }
+        //    base.OnKeyPress(e);
+        //}
 
-        private void BarcodeTimer_Tick(object sender, EventArgs e)
-        {
-            _barcodeTimer.Stop();
-            if (_barcodeBuffer.Length > 0)
-            {
-                ProcessBarcode(_barcodeBuffer);
-                _barcodeBuffer = "";
-                txtBarcode.ForeColor = TextMuted;
-                txtBarcode.Text = "📷  Scan barcode…";
-            }
-        }
+        //private void BarcodeTimer_Tick(object sender, EventArgs e)
+        //{
+        //    _barcodeTimer.Stop();
+        //    if (_barcodeBuffer.Length > 0)
+        //    {
+        //        ProcessBarcode(_barcodeBuffer);
+        //        _barcodeBuffer = "";
+        //        txtBarcode.ForeColor = TextMuted;
+        //        txtBarcode.Text = "📷  Scan barcode…";
+        //    }
+        //}
 
         private async void ProcessBarcode(string code)
         {
@@ -8057,7 +8057,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
         // AFTER
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
-            bool inTextBox = txtSearch.Focused || txtCustomer.Focused || txtBarcode.Focused;
+            bool inTextBox = txtSearch.Focused || txtCustomer.Focused;//| txtBarcode.Focused
             if (!inTextBox)
             {
                 if (keyData == Keys.F8) { OpenFloatManager(); return true; }
@@ -8072,7 +8072,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 return true;
             }
             if (keyData == Keys.F5) { txtSearch.Focus(); return true; }
-            if (keyData == Keys.F6) { txtBarcode.Focus(); return true; }
+           // if (keyData == Keys.F6) { txtBarcode.Focus(); return true; }
             return base.ProcessCmdKey(ref msg, keyData);
         }
 
@@ -9835,7 +9835,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             }
 
             if (txtSearch != null) txtSearch.Enabled = true;
-            if (txtBarcode != null) txtBarcode.Enabled = true;
+            //if (txtBarcode != null) txtBarcode.Enabled = true;
             if (_searchWrapper != null) { _searchWrapper.Enabled = true; _searchWrapper.BackColor = InputBg; }
             if (_barcodeWrapper != null) { _barcodeWrapper.Enabled = true; _barcodeWrapper.BackColor = InputBg; }
             if (nudDiscount != null) nudDiscount.Enabled = true;
@@ -9847,8 +9847,8 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             txtCustomer.Text = "👤  Search customer…";
             txtSearch.ForeColor = TextMuted;
             txtSearch.Text = "  Search products…";
-            txtBarcode.ForeColor = TextMuted;
-            txtBarcode.Text = "  Scan barcode…";
+            //txtBarcode.ForeColor = TextMuted;
+            //txtBarcode.Text = "  Scan barcode…";
             listSearchResults.Visible = false;
             HideCustomerDropdown();
             nudDiscount.Value = _defaultDiscountPct;
@@ -9956,20 +9956,20 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 }
 
                 int rightEdge = btnMin.Left - 20;
-                if (txtBarcode != null)
-                {
-                    txtBarcode.Location = new Point(rightEdge - txtBarcode.Width, 10);
-                    if (lblBarcodeHeader != null)
-                        lblBarcodeHeader.Location = new Point(txtBarcode.Left - 16, 12);
-                    if (lblBarcodeSep != null)
-                        lblBarcodeSep.Location = new Point(txtBarcode.Left - 34, 10);
-                }
+                //if (txtBarcode != null)
+                //{
+                //    txtBarcode.Location = new Point(rightEdge - txtBarcode.Width, 10);
+                //    if (lblBarcodeHeader != null)
+                //        lblBarcodeHeader.Location = new Point(txtBarcode.Left - 16, 12);
+                //    if (lblBarcodeSep != null)
+                //        lblBarcodeSep.Location = new Point(txtBarcode.Left - 34, 10);
+                //}
 
-                if (txtSearch != null && lblBarcodeSep != null)
-                {
-                    int searchRight = lblBarcodeSep.Left - 10;
-                    txtSearch.Width = Math.Max(200, searchRight - txtSearch.Left);
-                }
+                //if (txtSearch != null && lblBarcodeSep != null)
+                //{
+                //    int searchRight = lblBarcodeSep.Left - 10;
+                //    txtSearch.Width = Math.Max(200, searchRight - txtSearch.Left);
+                //}
             }
             catch (ObjectDisposedException) { }
         }

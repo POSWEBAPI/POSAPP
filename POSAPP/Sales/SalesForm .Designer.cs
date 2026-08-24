@@ -16,7 +16,7 @@ namespace POSAPP
 
         // Header search controls (moved from left column)
         private Label lblSearchHeader, lblBarcodeHeader;
-        private Label lblSearchSep, lblBarcodeSep;
+        private Label lblSearchSep;// lblBarcodeSep;
 
         // Root layout
         private TableLayoutPanel tblRoot;
@@ -25,7 +25,7 @@ namespace POSAPP
         private Panel panelLeft;
         private Panel panelSearchCard;
         private Label lblBarcodeTitle, lblCustomerTitle;
-        private TextBox txtSearch, txtBarcode, txtCustomer;
+        private TextBox txtSearch, txtCustomer;//txtBarcode
         private ListBox listSearchResults;
         private Label lblBarcodeHint, lblStatus;
         private Panel panelDiscountCard;
@@ -82,11 +82,11 @@ namespace POSAPP
             btnMin = new Button(); btnMax = new Button(); btnClose = new Button();
 
             txtSearch = new TextBox();
-            txtBarcode = new TextBox();
+            //txtBarcode = new TextBox();
             lblSearchHeader = new Label();
             lblBarcodeHeader = new Label();
             lblSearchSep = new Label();
-            lblBarcodeSep = new Label();
+            //lblBarcodeSep = new Label();
 
             tblRoot = new TableLayoutPanel();
 
@@ -204,28 +204,28 @@ namespace POSAPP
             txtSearch.Size = new Size(550, 24);
             txtSearch.Location = new Point(586, 10);
 
-            lblBarcodeSep.Text = "|";
-            lblBarcodeSep.Font = new Font("Segoe UI", 13F);
-            lblBarcodeSep.ForeColor = Color.FromArgb(55, 60, 75);
-            lblBarcodeSep.BackColor = Color.Transparent;
-            lblBarcodeSep.AutoSize = true;
-            lblBarcodeSep.Location = new Point(582, 10);
+            //lblBarcodeSep.Text = "|";
+            //lblBarcodeSep.Font = new Font("Segoe UI", 13F);
+            //lblBarcodeSep.ForeColor = Color.FromArgb(55, 60, 75);
+            //lblBarcodeSep.BackColor = Color.Transparent;
+            //lblBarcodeSep.AutoSize = true;
+            //lblBarcodeSep.Location = new Point(582, 10);
 
-            lblBarcodeHeader.Text = "▦";
-            lblBarcodeHeader.Font = new Font("Segoe UI", 10F);
-            lblBarcodeHeader.ForeColor = Color.FromArgb(52, 211, 153);
-            lblBarcodeHeader.BackColor = Color.Transparent;
-            lblBarcodeHeader.AutoSize = true;
-            lblBarcodeHeader.Location = new Point(598, 12);
-            lblBarcodeHeader.Cursor = Cursors.IBeam;
-            lblBarcodeHeader.Click += (s, e) => txtBarcode.Focus();
+            //lblBarcodeHeader.Text = "▦";
+            //lblBarcodeHeader.Font = new Font("Segoe UI", 10F);
+            //lblBarcodeHeader.ForeColor = Color.FromArgb(52, 211, 153);
+            //lblBarcodeHeader.BackColor = Color.Transparent;
+            //lblBarcodeHeader.AutoSize = true;
+            //lblBarcodeHeader.Location = new Point(598, 12);
+            //lblBarcodeHeader.Cursor = Cursors.IBeam;
+            //lblBarcodeHeader.Click += (s, e) => txtBarcode.Focus();
 
-            txtBarcode.Font = new Font("Consolas", 9F);
-            txtBarcode.ForeColor = Color.FromArgb(52, 211, 153);
-            txtBarcode.BackColor = Color.FromArgb(44, 48, 60);
-            txtBarcode.BorderStyle = BorderStyle.None;
-            txtBarcode.Size = new Size(160, 24);
-            txtBarcode.Location = new Point(1216, 10); 
+            //txtBarcode.Font = new Font("Consolas", 9F);
+            //txtBarcode.ForeColor = Color.FromArgb(52, 211, 153);
+            //txtBarcode.BackColor = Color.FromArgb(44, 48, 60);
+            //txtBarcode.BorderStyle = BorderStyle.None;
+            //txtBarcode.Size = new Size(160, 24);
+            //txtBarcode.Location = new Point(1216, 10); 
 
             Button MakeHdrBtn(string t, bool bold = false)
             {
@@ -274,10 +274,10 @@ namespace POSAPP
             panelHeader.Controls.AddRange(new Control[]
             {
                 lblPOSTitle, lblOperator, lblInvoiceNo,
-                lblSearchSep, lblSearchHeader, txtSearch,
-                lblBarcodeSep, lblBarcodeHeader, txtBarcode,
+                lblSearchSep, lblSearchHeader, txtSearch
+                , lblBarcodeHeader, 
                 lblDate, lblTime,
-                btnClose, btnMax, btnMin
+                btnClose, btnMax, btnMin//txtBarcodelblBarcodeSep
             });
 
             // ══════════════════════════════════════════════════════════════════

@@ -1,4 +1,21 @@
-﻿using POSAPP.Invoice;
+﻿// ════════════════════════════════════════════════════════════════════════
+//  SalesReturnForm.cs
+//
+//  Brings the React "Return Order" concept (customer → browse their
+//  invoices → pick lines → set Return Qty → Add) into this WinForms
+//  screen, plus header-level RMA / Return Reason and a Disposition step
+//  before saving — matching SalesOrderEntry.jsx.
+//
+//  Aligned to your real SalesReturnRepository:
+//    - Customers come from  GetActiveCustomersAsync(companyId)  → List<POSAPP.CustomerFullDto>
+//    - Invoices for a customer come from  GetInvoicesForCustomer(customerName, companyId)
+//      — keyed by CUSTOMER NAME (string), not an ID → List<POSAPP.Invoice.InvoiceLite>
+//    - Already-returned qty comes from  GetReturnedQtysAsync(invoiceNo)  (async)
+//    - SalesReturnRecord's header fields are named RmaNumber / ReturnReason / DispositionCode
+//    - SalesReturnLine already has OriginalInvoiceNo per line
+// ════════════════════════════════════════════════════════════════════════
+
+using POSAPP.Invoice;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -6,111 +23,67 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Printing;
 using System.IO;
 using System.Linq;
-using System.Windows.Forms;
 using System.Threading.Tasks;
+using System.Windows.Forms;
 
 namespace POSAPP.Sales
 {
-    // ════════════════════════════════════════════════════════════════════════
-    //  SALES RETURN — v2, rebuilt as a LIST + DETAIL screen (Zoho-Books style)
-    //  instead of the earlier stacked-card wizard.
-    //
-    //      LEFT  : searchable list of orders (one row per customer invoice),
-    //              each showing customer name, order/invoice no + date,
-    //              amount, and a status word (CONFIRMED / RETURNED), exactly
-    //              the layout used in the reference screenshot's order list.
-    //
-    //      RIGHT : detail panel for the selected order.
-    //              - Toolbar: Edit / Email / PDF·Print / Create ▾
-    //                (Create ▾ opens a menu with a single "Sales Return" item,
-    //                 mirroring the dropdown in the screenshot)
-    //              - "Order Detail" view: order # header, status chips for
-    //                Order / Invoice / Payment / Shipment, order meta
-    //                (date, register, fulfillment, payment terms, channel),
-    //                and Billing / Shipping address cards.
-    //              - Clicking "Sales Return" swaps the same panel into the
-    //                "Return Builder" view: the invoice's returnable lines
-    //                (Return Qty + Add), the return cart, reason / RMA /
-    //                disposition fields, refund totals, and Process/Cancel.
-    //
-    //  ASSUMPTIONS / REPOSITORY CONTRACT (same repository surface as before):
-    //      SalesReturnRepository.GetActiveCustomersAsync(companyId)
-    //      SalesReturnRepository.GetInvoicesForCustomerAsync(customerId)
-    //      SalesReturnRepository.GetReturnedQtysAsync(invoiceNo)
-    //      SalesReturnRepository.IsFullyReturned(invoiceNo)
-    //      SalesReturnRepository.NextReturnInvoiceNo()
-    //      SalesReturnRepository.EnsureSchema() / SaveReturn(record)
-    //      CustomerFullDto           : CustomerID, CustomerName
-    //      InvoiceWithLines          : Header (InvoiceHeader), Lines
-    //      InvoiceHeader             : InvoiceNo, InvoiceDate, LineCount, Total
-    //  Fields such as Payment/Invoice/Shipment status and Billing/Shipping
-    //  address aren't tracked by this schema yet, so those are shown as
-    //  reasonable static labels ("Paid", "Invoiced", "Fulfilled") — swap in
-    //  real fields once the repository exposes them (marked with TODO below).
-    // ════════════════════════════════════════════════════════════════════════
     public class SalesReturnForm : Form
     {
-        // ── Palette (LIGHT / TEAL theme — matches the "Return Wizard" reference) ──
-        private static readonly Color BgPage = Color.FromArgb(247, 245, 240);       // warm off-white page background
-        private static readonly Color PanelWhite = Color.FromArgb(255, 255, 255);   // card / panel background
-        private static readonly Color PanelAlt = Color.FromArgb(244, 244, 240);     // alt row / hover background
-        private static readonly Color BorderColor = Color.FromArgb(226, 224, 216);
-        private static readonly Color TextDark = Color.FromArgb(31, 41, 38);        // primary text (near-black, cool tint)
-        private static readonly Color TextMid = Color.FromArgb(110, 122, 116);
-        private static readonly Color TextLight = Color.FromArgb(160, 170, 164);
-        private static readonly Color AccentBlue = Color.FromArgb(45, 149, 130);    // primary accent -> teal
-        private static readonly Color AccentBlueLight = Color.FromArgb(222, 241, 236); // accent-tinted background
-        private static readonly Color AccGreen = Color.FromArgb(45, 149, 130);
-        private static readonly Color AccGreenLight = Color.FromArgb(222, 241, 236);
-        private static readonly Color AccRed = Color.FromArgb(214, 69, 69);
-        private static readonly Color AccRedLight = Color.FromArgb(252, 231, 231);
-        private static readonly Color AccAmber = Color.FromArgb(214, 130, 30);
-        private static readonly Color RowHoverBg = Color.FromArgb(248, 247, 243);
-        private static readonly Color RowSelectedBg = Color.FromArgb(222, 241, 236);
-        private static readonly Color InputBg = Color.FromArgb(250, 250, 248);
-        private static readonly Color InputBorder = Color.FromArgb(210, 214, 206);
+        // ── Palette (dark theme) ────────────────────────────────────────────
+        private static readonly Color BgPage = Color.FromArgb(22, 24, 30);
+        private static readonly Color CardWhite = Color.FromArgb(32, 35, 44);
+        private static readonly Color CardBorder = Color.FromArgb(50, 54, 66);
+        private static readonly Color AccGreen = Color.FromArgb(34, 197, 94);
+        private static readonly Color AccBlue = Color.FromArgb(59, 130, 246);
+        private static readonly Color AccOrange = Color.FromArgb(251, 146, 60);
+        private static readonly Color AccRed = Color.FromArgb(239, 68, 68);
+        private static readonly Color AccCyan = Color.FromArgb(20, 184, 166);
+        private static readonly Color AccPurple = Color.FromArgb(168, 130, 246);
+        private static readonly Color TextDark = Color.FromArgb(240, 242, 246);
+        private static readonly Color TextMid = Color.FromArgb(160, 170, 188);
+        private static readonly Color TextLight = Color.FromArgb(100, 110, 130);
+        private static readonly Color TextGreen = Color.FromArgb(52, 211, 153);
+        private static readonly Color HeaderBg = Color.FromArgb(32, 35, 44);
+        private static readonly Color HeaderBorder = Color.FromArgb(50, 54, 66);
+        private static readonly Color BadgeGreen = Color.FromArgb(20, 60, 30);
+        private static readonly Color BadgeGreenT = Color.FromArgb(52, 211, 153);
+        private static readonly Color InputBorder = Color.FromArgb(60, 65, 80);
+        private static readonly Color InputFocus = Color.FromArgb(59, 130, 246);
+        private static readonly Color RowAlt = Color.FromArgb(38, 42, 52);
+        private static readonly Color SummaryBg = Color.FromArgb(28, 32, 42);
 
-        // ── Reason / Disposition option lists ───────────────────────────────
+        // ── Return policy ────────────────────────────────────────────────────
+        private const int MAX_RETURN_DAYS = 30;
+
+        // ── Static option lists (mirrors RETURN_REASON_OPTIONS / DISPOSITION_OPTIONS in the React file) ──
         private static readonly string[] ReturnReasonOptions =
         {
             "Damaged Goods", "Wrong Item Shipped", "Excess Stock", "Quality Issue",
             "Expired Product", "Pricing Discrepancy", "Customer Cancellation", "Other"
         };
+        private static readonly string[] LineReasonOptions =
+            { "Defective", "Wrong Size", "Wrong Item", "Not as Described", "Changed Mind", "Other" };
         private static readonly string[] DispositionOptions =
-        {
-            "Credit", "Scrap", "Return to Vendor", "Replace", "Repair", "Restock"
-        };
+            { "Credit", "Scrap", "Return to Vendor", "Replace", "Repair", "Restock" };
 
-        // ── Company / context ───────────────────────────────────────────────
+        // ── State ────────────────────────────────────────────────────────────
         private readonly int _companyId;
         private string _currencySymbol = "P";
-        private string _companyName = "";
-        private string _companyAddress = "";
-        private string _companyPhone = "";
-        private string _companyVat = "";
-        private string _companyWebsite = "";
-        private string _salesOfficeInfo = "";
+        private string _companyName = "", _companyAddress = "", _companyPhone = "", _companyVat = "", _companyWebsite = "", _salesOfficeInfo = "";
 
-        // ── Order list state ────────────────────────────────────────────────
-        private class OrderRow
-        {
-            public CustomerFullDto Customer;
-            public InvoiceWithLines Invoice;
-            public bool IsFullyReturned;
-        }
-        private List<OrderRow> _allOrders = new List<OrderRow>();
-        private OrderRow _selectedOrder;
-        private Panel _selectedRowPanel;
-
-        // ── Return-in-progress state (same shape as before) ─────────────────
-        private int _selectedCustomerId;
+        private int? _selectedCustomerId;
         private string _selectedCustomerName = "";
-        private string _currentInvoiceNo = "";
-        private List<InvoiceLineCandidate> _currentInvoiceLines = new List<InvoiceLineCandidate>();
-        private List<ReturnCartLine> _cartLines = new List<ReturnCartLine>();
+        private List<POSAPP.CustomerFullDto> _customers = new List<POSAPP.CustomerFullDto>();
+        private List<InvoiceLite> _customerInvoices = new List<InvoiceLite>();
+
+        private string _activeInvoiceNo;                                   // invoice currently being browsed
+        private List<CandidateLine> _candidateLines = new List<CandidateLine>(); // lines of the browsed invoice, not yet added
+        private List<ReturnLineItem> _returnLines = new List<ReturnLineItem>();  // lines actually in this return (can span invoices)
+
         private string _refundMethod = "cash";
-        private string _returnReason = "";
         private string _rmaNumber = "";
+        private string _returnReasonCode = "";
         private string _dispositionCode = "";
 
         private bool _drag;
@@ -118,75 +91,69 @@ namespace POSAPP.Sales
         private bool _isMaximized = false;
         private Rectangle _normalBounds;
 
-        // ── Chrome ───────────────────────────────────────────────────────────
-        private Panel panelHeader;
-        private Label lblTitle;
-        private Button btnMaximize;
+        // ── Controls ─────────────────────────────────────────────────────────
+        private Panel panelHeader, panelFooter, panelContent;
+        private Label lblTitle, lblStatus, lblRefundTotal;
+        private Button btnProcessReturn, btnCancel, btnMaximize;
+        private Panel _scrollOuter;
 
-        // ── Left list ────────────────────────────────────────────────────────
-        private const int LIST_W_DEFAULT = 330;
-        private const int LIST_W_MIN = 280;
-        private Panel pnlLeftList;
-        private TextBox txtOrderSearch;
-        private ComboBox cmbCustomerFilter;
-        private Panel pnlOrderRowsScroll;
-        private Panel pnlOrderRows;
-        private Label lblOrdersEmpty;
+        private ComboBox cmbCustomer;
+        private FlowLayoutPanel flowInvoices;
+        private Panel panelCandidateLines;
+        private Label lblCandidateHeader;
+        private Button btnBackToInvoices;
 
-        // ── Right detail ─────────────────────────────────────────────────────
-        private Panel pnlRightDetail;
-        private Panel pnlDetailToolbar;
-        private Label lblOrderNumberHeader;
-        private Button btnEdit, btnEmail, btnPdfPrint, btnCreateMenu;
-        private ContextMenuStrip mnuCreate;
-        private Panel pnlDetailBody;               // hosts either order-detail or return-builder
-        private Panel pnlOrderDetailView;
-        private Panel pnlReturnBuilderView;
-        private Label lblNoSelection;
-
-        // Sticky footer (Process Return / Cancel) — lives OUTSIDE the scrollable
-        // pnlDetailBody, docked to the bottom of pnlRightDetail, so the action
-        // buttons are always reachable regardless of scroll position or window size.
-        private Panel pnlBuilderFooter;
-
-        // Return-builder inner controls
-        private Label lblReturnBuilderInvoice;
-        private Panel pnlInvoiceLinesHeader, panelInvoiceLineRows;
-        private Panel panelCartRows;
-        private Label lblCartEmpty;
+        private TextBox txtRMA;
         private ComboBox cmbReturnReason;
-        private TextBox txtRma;
-        private ComboBox cmbDisposition;
+
+        private Panel panelLines;
+        private Panel panelRefundMethod;
         private Button btnMethodCash;
-        private Label _lblSummarySubtotal, _lblSummaryTax, _lblSummaryTotal;
-        private Label lblBuilderStatus;
-        private Button btnProcessReturn, btnCancelReturn;
-        private Label lblRefundTotalFooter;
 
-        private const int HEADER_H = 52;
-        private const int CARD_RADIUS = 14;
-        private const int CARD_PAD = 20;   // inner padding used consistently for card content placement
+        // ── Layout constants ────────────────────────────────────────────────
+        private const int HEADER_H = 60;
+        private const int FOOTER_H = 68;
+        private const int CARD_RADIUS = 12;
+        private const int CARD_MARGIN = 16;
+        private const int CARD_PAD = 20;
 
         // ══════════════════════════════════════════════════════════════════
-        //  MODELS (unchanged from v1)
+        //  MODELS
         // ══════════════════════════════════════════════════════════════════
-        private class InvoiceLineCandidate
+        public class CustomerSummary
         {
-            public string ItemName { get; set; }
+            public int CustomerId { get; set; }
+            public string CustomerName { get; set; }
+            public override string ToString() => CustomerName;
+        }
+
+        public class InvoiceSummary
+        {
+            public string InvoiceNo { get; set; }
+            public DateTime? InvoiceDate { get; set; }
+            public decimal Total { get; set; }
+            public int LineCount { get; set; }
+        }
+
+        /// <summary>A line from a browsed invoice that has not yet been added to the return.</summary>
+        private class CandidateLine
+        {
+            public string SourceKey { get; set; }          // "{InvoiceNo}|{ItemName}|{Barcode}"
+            public string InvoiceNo { get; set; }
+            public string Name { get; set; }
             public decimal UnitPrice { get; set; }
             public decimal DiscountPct { get; set; }
             public decimal TaxPct { get; set; }
             public string UOM { get; set; } = "EA";
             public string Barcode { get; set; }
-            public int PurchasedQty { get; set; }
-            public int AlreadyReturnedQty { get; set; }
-            public int MaxReturnable => Math.Max(0, PurchasedQty - AlreadyReturnedQty);
-            public int ReturnQty { get; set; } = 0;
-            public bool Added { get; set; } = false;
+            public int PurchasedQty { get; set; }           // remaining returnable qty on that invoice
+            public int ReturnQty { get; set; }
+            public bool Added { get; set; }
         }
 
-        private class ReturnCartLine
+        private class ReturnLineItem
         {
+            public string SourceKey { get; set; }
             public string SourceInvoiceNo { get; set; }
             public string Name { get; set; }
             public decimal UnitPrice { get; set; }
@@ -195,22 +162,24 @@ namespace POSAPP.Sales
             public int ReturnQty { get; set; }
             public string Barcode { get; set; }
             public string UOM { get; set; } = "EA";
+            public string Reason { get; set; } = "Defective";
 
             public decimal LineSubtotal => Math.Round(UnitPrice * ReturnQty * (1m - DiscountPct / 100m), 2);
             public decimal LineTax => Math.Round(LineSubtotal * TaxPct / 100m, 2);
             public decimal LineRefund => LineSubtotal + LineTax;
         }
 
+        // ── A4 receipt DTOs ──────────────────────────────────────────────────
         private class ReturnReceiptData
         {
             public string ReturnInvoiceNo { get; set; }
-            public string OriginalInvoiceNos { get; set; }
+            public string OriginalInvoiceNos { get; set; }     // comma-joined — may span several invoices now
             public string CustomerName { get; set; }
             public DateTime ReturnDate { get; set; }
             public string CashierName { get; set; }
             public string RefundMethod { get; set; }
-            public string ReturnReason { get; set; }
-            public string RmaNumber { get; set; }
+            public string RMANumber { get; set; }
+            public string ReturnReasonCode { get; set; }
             public string DispositionCode { get; set; }
             public decimal RefundSubtotal { get; set; }
             public decimal RefundTax { get; set; }
@@ -227,7 +196,7 @@ namespace POSAPP.Sales
 
         private class ReturnReceiptLine
         {
-            public string OriginalInvoiceNo { get; set; }
+            public string InvoiceNo { get; set; }
             public string ItemName { get; set; }
             public int ReturnQty { get; set; }
             public string UOM { get; set; } = "EA";
@@ -269,53 +238,47 @@ namespace POSAPP.Sales
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.CenterScreen;
             BackColor = BgPage;
-            AutoScaleMode = AutoScaleMode.Dpi;                 // scale consistently across DPI / resolutions
-            ClientSize = new Size(1180, 780);
+            ClientSize = new Size(860, 900);
             KeyPreview = true;
             Text = "Sales Return";
-            MinimumSize = new Size(940, 620);
-            SetStyle(ControlStyles.AllPaintingInWmPaint |
-                     ControlStyles.UserPaint |
-                     ControlStyles.DoubleBuffer |
-                     ControlStyles.OptimizedDoubleBuffer, true);
+            MinimumSize = new Size(720, 620);
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.DoubleBuffer, true);
 
-            BuildTitleBar();
-            BuildLeftList();
-            BuildRightDetail();
+            BuildHeader();
+            BuildFooter();
+            BuildScrollArea();
 
             KeyDown += (s, e) => { if (e.KeyCode == Keys.Escape) Close(); };
-            Shown += (s, e) => { txtOrderSearch?.Focus(); };
-
-            _ = LoadAllOrdersAsync();
+            Shown += (s, e) => { LayoutFooterButtons(); LoadCustomers(); cmbCustomer?.Focus(); };
         }
 
-        // ── Title bar ────────────────────────────────────────────────────────
-        private void BuildTitleBar()
+        private void BuildHeader()
         {
-            panelHeader = new Panel { BackColor = PanelWhite, Dock = DockStyle.Top, Height = HEADER_H };
+            panelHeader = new Panel { BackColor = HeaderBg, Dock = DockStyle.Top, Height = HEADER_H };
             panelHeader.Paint += (s, e) =>
             {
-                e.Graphics.Clear(PanelWhite);
-                using var pen = new Pen(BorderColor, 1f);
+                e.Graphics.Clear(HeaderBg);
+                using var pen = new Pen(HeaderBorder, 1f);
                 e.Graphics.DrawLine(pen, 0, HEADER_H - 1, panelHeader.Width, HEADER_H - 1);
             };
 
             lblTitle = new Label
             {
                 Text = "Sales Return",
-                Font = new Font("Segoe UI", 12F, FontStyle.Bold),
+                Font = new Font("Segoe UI", 13F, FontStyle.Bold),
                 ForeColor = TextDark,
-                BackColor = PanelWhite,
+                BackColor = Color.Transparent,
                 AutoSize = true,
-                Location = new Point(20, (HEADER_H - 20) / 2 - 1)
+                Location = new Point(44, (HEADER_H - 20) / 2 - 1)
             };
 
             btnMaximize = MakeTitleBtn("□", new Point(ClientSize.Width - 92, 0));
             var btnClose = MakeTitleBtn("✕", new Point(ClientSize.Width - 46, 0));
             var btnMin = MakeTitleBtn("−", new Point(ClientSize.Width - 138, 0));
+
             btnClose.ForeColor = AccRed;
-            btnClose.MouseEnter += (s, e) => btnClose.BackColor = AccRedLight;
-            btnClose.MouseLeave += (s, e) => btnClose.BackColor = PanelWhite;
+            btnClose.MouseEnter += (s, e) => btnClose.BackColor = Color.FromArgb(254, 226, 226);
+            btnClose.MouseLeave += (s, e) => btnClose.BackColor = Color.Transparent;
             btnClose.Click += (s, e) => Close();
             btnMin.Click += (s, e) => WindowState = FormWindowState.Minimized;
             btnMaximize.Click += (s, e) => ToggleMaximize();
@@ -337,1039 +300,680 @@ namespace POSAPP.Sales
         private void ToggleMaximize()
         {
             if (_isMaximized)
-            { Bounds = _normalBounds; _isMaximized = false; btnMaximize.Text = "□"; }
+            { Bounds = _normalBounds; _isMaximized = false; btnMaximize.Text = "□"; Region = null; }
             else
             {
                 _normalBounds = Bounds; _isMaximized = true; btnMaximize.Text = "❐";
-                Bounds = Screen.FromControl(this).WorkingArea;
+                Bounds = Screen.FromControl(this).WorkingArea; Region = null;
             }
+            LayoutFooterButtons();
         }
 
-        // ══════════════════════════════════════════════════════════════════
-        //  LEFT — ORDER LIST  (now resizable % width + customer filter)
-        // ══════════════════════════════════════════════════════════════════
-        private void BuildLeftList()
+        private void BuildFooter()
         {
-            pnlLeftList = new Panel
+            panelFooter = new Panel { BackColor = CardWhite, Dock = DockStyle.Bottom, Height = FOOTER_H };
+            panelFooter.Paint += (s, e) =>
             {
-                BackColor = PanelWhite,
-                Dock = DockStyle.Left,
-                Width = LIST_W_DEFAULT,
-                MinimumSize = new Size(LIST_W_MIN, 0)
-            };
-            pnlLeftList.Paint += (s, e) =>
-            {
-                using var pen = new Pen(BorderColor, 1f);
-                e.Graphics.DrawLine(pen, pnlLeftList.Width - 1, 0, pnlLeftList.Width - 1, pnlLeftList.Height);
-            };
-            Controls.Add(pnlLeftList);
-
-            // Header block hosts: caption + refresh (row 1), text search (row 2),
-            // and a customer filter dropdown (row 3). Height is generous and every
-            // row is on its own non-overlapping band so nothing can collide, and a
-            // bottom divider line makes the boundary with the order list explicit —
-            // the order list can never render "under" the filter controls.
-            const int LIST_HEADER_H = 136;
-            var pnlListHeader = new Panel { Dock = DockStyle.Top, Height = LIST_HEADER_H, BackColor = PanelWhite };
-            pnlListHeader.Paint += (s, e) =>
-            {
-                using var pen = new Pen(BorderColor, 1f);
-                e.Graphics.DrawLine(pen, 0, LIST_HEADER_H - 1, pnlListHeader.Width, LIST_HEADER_H - 1);
+                e.Graphics.Clear(CardWhite);
+                using var pen = new Pen(HeaderBorder, 1f);
+                e.Graphics.DrawLine(pen, 0, 0, panelFooter.Width, 0);
             };
 
-            var lblOrdersCap = new Label
+            lblStatus = new Label
             {
-                Text = "All Sales Orders",
-                Font = new Font("Segoe UI", 11F, FontStyle.Bold),
-                ForeColor = TextDark,
-                BackColor = PanelWhite,
-                AutoSize = true,
-                Location = new Point(16, 12)
-            };
-
-
-
-            txtOrderSearch = new TextBox
-            {
-                Font = new Font("Segoe UI", 9.5F),
-                ForeColor = TextDark,
-                BackColor = InputBg,
-                BorderStyle = BorderStyle.FixedSingle,
-                Location = new Point(16, 46),
-                Size = new Size(pnlLeftList.Width - 32, 28),
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
-            };
-            AddPlaceholder(txtOrderSearch, "Search customer or order #");
-            txtOrderSearch.TextChanged += (s, e) => ApplyOrderFilters();
-
-            // Customer filter dropdown — populated once orders are loaded.
-            cmbCustomerFilter = new ComboBox
-            {
-                Font = new Font("Segoe UI", 9F),
-                ForeColor = TextDark,
-                BackColor = InputBg,
-                FlatStyle = FlatStyle.Flat,
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Location = new Point(16, 84),
-                Size = new Size(pnlLeftList.Width - 32, 26),
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
-            };
-            cmbCustomerFilter.Items.Add("All Customers");
-            cmbCustomerFilter.SelectedIndex = 0;
-            cmbCustomerFilter.SelectedIndexChanged += (s, e) => ApplyOrderFilters();
-
-            // Position the refresh button once we know the caption's width so the
-            // two never sit on top of each other even with long localized captions.
-
-
-            pnlListHeader.Controls.Add(lblOrdersCap);
-
-            pnlListHeader.Controls.Add(txtOrderSearch);
-            pnlListHeader.Controls.Add(cmbCustomerFilter);
-
-            // Auto-refresh whenever the window regains focus, so stale data doesn't linger.
-            this.Activated += async (s, e) => await LoadAllOrdersAsync();
-
-            pnlOrderRowsScroll = new Panel { Dock = DockStyle.Fill, BackColor = PanelWhite, AutoScroll = true };
-
-            // IMPORTANT: add the Top-docked header BEFORE the Fill-docked scroll
-            // area. Docking is resolved in the order controls are added, so the
-            // header must reserve its band first — otherwise the list can be laid
-            // out starting at y = 0 and render underneath/behind the filter row.
-            pnlLeftList.Controls.Add(pnlListHeader);
-            pnlLeftList.Controls.Add(pnlOrderRowsScroll);
-
-            pnlOrderRows = new Panel { BackColor = PanelWhite, AutoSize = true, Location = new Point(0, 0), Width = pnlLeftList.Width - 20 };
-            pnlOrderRowsScroll.Controls.Add(pnlOrderRows);
-            pnlOrderRowsScroll.SizeChanged += (s, e) =>
-            {
-                pnlOrderRows.Width = Math.Max(1, pnlOrderRowsScroll.ClientSize.Width);
-                RebuildOrderRows(FilterOrders());
-            };
-
-            lblOrdersEmpty = new Label
-            {
-                Text = "Loading orders…",
-                Font = new Font("Segoe UI", 9F),
-                ForeColor = TextLight,
-                BackColor = PanelWhite,
-                AutoSize = true,
-                Location = new Point(16, 8)
-            };
-            pnlOrderRows.Controls.Add(lblOrdersEmpty);
-        }
-
-        private static void AddPlaceholder(TextBox tb, string placeholder)
-        {
-            tb.Tag = placeholder;
-            tb.Text = placeholder;
-            tb.ForeColor = TextLight;
-            tb.Enter += (s, e) => { if (tb.Text == placeholder) { tb.Text = ""; tb.ForeColor = TextDark; } };
-            tb.Leave += (s, e) => { if (string.IsNullOrWhiteSpace(tb.Text)) { tb.Text = placeholder; tb.ForeColor = TextLight; } };
-        }
-
-        private async Task LoadAllOrdersAsync()
-        {
-            lblOrdersEmpty.Text = "Loading orders…";
-            var customers = await SalesReturnRepository.GetActiveCustomersAsync(_companyId);
-            var rows = new List<OrderRow>();
-
-            foreach (var cust in customers)
-            {
-                List<InvoiceWithLines> invoices;
-                try { invoices = await SalesReturnRepository.GetInvoicesForCustomerAsync(cust.CustomerID); }
-                catch { continue; }
-
-                foreach (var inv in invoices)
-                {
-                    rows.Add(new OrderRow
-                    {
-                        Customer = cust,
-                        Invoice = inv,
-                        IsFullyReturned = SalesReturnRepository.IsFullyReturned(inv.Header.InvoiceNo)
-                    });
-                }
-            }
-
-            _allOrders = rows.OrderByDescending(r => r.Invoice.Header.InvoiceDate).ToList();
-
-            // Populate the customer filter dropdown with distinct, sorted customer names.
-            string currentSel = cmbCustomerFilter.SelectedItem as string;
-            cmbCustomerFilter.SelectedIndexChanged -= CustomerFilterChanged;
-            cmbCustomerFilter.Items.Clear();
-            cmbCustomerFilter.Items.Add("All Customers");
-            foreach (var name in _allOrders.Select(r => r.Customer.CustomerName)
-                                            .Where(n => !string.IsNullOrWhiteSpace(n))
-                                            .Distinct(StringComparer.OrdinalIgnoreCase)
-                                            .OrderBy(n => n))
-                cmbCustomerFilter.Items.Add(name);
-
-            int restoreIdx = !string.IsNullOrEmpty(currentSel) ? cmbCustomerFilter.Items.IndexOf(currentSel) : 0;
-            cmbCustomerFilter.SelectedIndex = restoreIdx >= 0 ? restoreIdx : 0;
-            cmbCustomerFilter.SelectedIndexChanged += CustomerFilterChanged;
-
-            ApplyOrderFilters();
-        }
-
-        // Named handler so it can be safely detached/reattached while repopulating the combo.
-        private void CustomerFilterChanged(object sender, EventArgs e) => ApplyOrderFilters();
-
-        private List<OrderRow> FilterOrders()
-        {
-            IEnumerable<OrderRow> result = _allOrders;
-
-            // Customer dropdown filter
-            if (cmbCustomerFilter != null && cmbCustomerFilter.SelectedIndex > 0)
-            {
-                string custName = cmbCustomerFilter.SelectedItem as string;
-                result = result.Where(r => string.Equals(r.Customer.CustomerName, custName, StringComparison.OrdinalIgnoreCase));
-            }
-
-            // Free-text search over customer name / order number
-            string query = txtOrderSearch?.Text ?? "";
-            string placeholder = (txtOrderSearch?.Tag as string) ?? "";
-            if (!string.IsNullOrWhiteSpace(query) && query != placeholder)
-            {
-                query = query.Trim();
-                result = result.Where(r =>
-                    (r.Customer.CustomerName ?? "").IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    (r.Invoice.Header.InvoiceNo ?? "").IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0);
-            }
-
-            return result.ToList();
-        }
-
-        private void ApplyOrderFilters() => RebuildOrderRows(FilterOrders());
-
-        private void RebuildOrderRows(List<OrderRow> rows)
-        {
-            pnlOrderRows.SuspendLayout();
-            foreach (Control c in pnlOrderRows.Controls) c.Dispose();
-            pnlOrderRows.Controls.Clear();
-            _selectedRowPanel = null;   // old panel instance was just disposed above
-
-            if (rows == null || rows.Count == 0)
-            {
-                lblOrdersEmpty.Text = "No orders found.";
-                lblOrdersEmpty.Location = new Point(16, 8);
-                pnlOrderRows.Controls.Add(lblOrdersEmpty);
-                pnlOrderRows.ResumeLayout();
-                return;
-            }
-
-            int y = 0, rowH = 66;
-            foreach (var row in rows)
-            {
-                var rowPanel = BuildOrderRow(row, y, rowH);
-                pnlOrderRows.Controls.Add(rowPanel);
-
-                // Re-attach _selectedRowPanel to the freshly built panel for the
-                // still-selected invoice, so later ScrollControlIntoView calls
-                // don't reference a disposed control.
-                if (_selectedOrder != null &&
-                    string.Equals(_selectedOrder.Invoice.Header.InvoiceNo, row.Invoice.Header.InvoiceNo, StringComparison.OrdinalIgnoreCase))
-                {
-                    _selectedRowPanel = rowPanel;
-                }
-
-                y += rowH;
-            }
-            pnlOrderRows.Height = y;
-            pnlOrderRows.ResumeLayout();
-
-            if (_selectedRowPanel != null)
-                pnlOrderRowsScroll.ScrollControlIntoView(_selectedRowPanel);
-        }
-
-        private Panel BuildOrderRow(OrderRow row, int y, int rowH)
-        {
-            bool selected = _selectedOrder != null &&
-                string.Equals(_selectedOrder.Invoice.Header.InvoiceNo, row.Invoice.Header.InvoiceNo, StringComparison.OrdinalIgnoreCase);
-
-            var panel = new Panel
-            {
-                BackColor = selected ? RowSelectedBg : PanelWhite,
-                Size = new Size(Math.Max(1, pnlOrderRowsScroll.ClientSize.Width), rowH),
-                Location = new Point(0, y),
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
-                Cursor = Cursors.Hand,
-                Padding = new Padding(16, 8, 16, 8)
-            };
-            panel.Paint += (s, e) =>
-            {
-                using var pen = new Pen(BorderColor, 1f);
-                e.Graphics.DrawLine(pen, 0, rowH - 1, panel.Width, rowH - 1);
-                if (selected)
-                {
-                    using var accentPen = new Pen(AccentBlue, 3f);
-                    e.Graphics.DrawLine(accentPen, 1, 0, 1, rowH);
-                }
-            };
-
-            Color rowBg = panel.BackColor;
-            var lblName = new Label
-            {
-                Text = row.Customer.CustomerName ?? "",
-                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
-                ForeColor = TextDark,
-                BackColor = rowBg,
-                AutoSize = true,
-                Location = new Point(16, 9)
-            };
-            var lblAmount = new Label
-            {
-                Text = Fmt(row.Invoice.Header.Total),
-                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
-                ForeColor = AccGreen,
-                BackColor = rowBg,
-                AutoSize = true,
-                Anchor = AnchorStyles.Top | AnchorStyles.Right
-            };
-            lblAmount.Location = new Point(panel.Width - lblAmount.PreferredWidth - 16, 9);
-
-            var lblMeta = new Label
-            {
-                Text = $"{row.Invoice.Header.InvoiceNo}  ·  {row.Invoice.Header.InvoiceDate:dd MMM yyyy}",
-                Font = new Font("Segoe UI", 8.2F),
-                ForeColor = TextMid,
-                BackColor = rowBg,
-                AutoSize = true,
-                Location = new Point(16, 32)
-            };
-
-            string statusText = row.IsFullyReturned ? "RETURNED" : "CONFIRMED";
-            Color statusColor = row.IsFullyReturned ? TextMid : AccAmber;
-            var lblStatus = new Label
-            {
-                Text = statusText,
-                Font = new Font("Segoe UI", 7.7F, FontStyle.Bold),
-                ForeColor = statusColor,
-                BackColor = rowBg,
-                AutoSize = true,
-                Anchor = AnchorStyles.Top | AnchorStyles.Right
-            };
-            lblStatus.Location = new Point(panel.Width - lblStatus.PreferredWidth - 16, 34);
-
-            panel.SizeChanged += (s, e) =>
-            {
-                lblAmount.Location = new Point(panel.Width - lblAmount.PreferredWidth - 16, 9);
-                lblStatus.Location = new Point(panel.Width - lblStatus.PreferredWidth - 16, 34);
-            };
-
-            panel.Controls.AddRange(new Control[] { lblName, lblAmount, lblMeta, lblStatus });
-
-            EventHandler clickHandler = (s, e) => SelectOrder(row, panel);
-            panel.Click += clickHandler;
-            panel.MouseEnter += (s, e) => { if (!selected) { panel.BackColor = RowHoverBg; foreach (Control c in panel.Controls) c.BackColor = RowHoverBg; } };
-            panel.MouseLeave += (s, e) => { if (!selected) { panel.BackColor = PanelWhite; foreach (Control c in panel.Controls) c.BackColor = PanelWhite; } };
-            foreach (Control child in panel.Controls)
-            {
-                child.Click += clickHandler;
-                child.Cursor = Cursors.Hand;
-            }
-
-            return panel;
-        }
-
-        // ══════════════════════════════════════════════════════════════════
-        //  RIGHT — DETAIL PANEL
-        // ══════════════════════════════════════════════════════════════════
-        private void BuildRightDetail()
-        {
-            pnlRightDetail = new Panel { Dock = DockStyle.Fill, BackColor = BgPage };
-            Controls.Add(pnlRightDetail);
-            pnlRightDetail.BringToFront();
-
-            BuildDetailToolbar();
-            BuildBuilderFooter();
-            BuildDetailBodyHost();
-
-            lblNoSelection = new Label
-            {
-                Text = "Select an order on the left to view its details.",
-                Font = new Font("Segoe UI", 10F),
-                ForeColor = TextLight,
-                BackColor = BgPage,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleCenter
-            };
-            pnlRightDetail.Controls.Add(lblNoSelection);
-            lblNoSelection.BringToFront();
-        }
-
-        private void BuildDetailToolbar()
-        {
-            pnlDetailToolbar = new Panel { Dock = DockStyle.Top, Height = 64, BackColor = PanelWhite, Visible = false };
-            pnlDetailToolbar.Paint += (s, e) =>
-            {
-                using var pen = new Pen(BorderColor, 1f);
-                e.Graphics.DrawLine(pen, 0, pnlDetailToolbar.Height - 1, pnlDetailToolbar.Width, pnlDetailToolbar.Height - 1);
-            };
-
-            lblOrderNumberHeader = new Label
-            {
-                Text = "",
-                Font = new Font("Segoe UI", 13F, FontStyle.Bold),
-                ForeColor = TextDark,
-                BackColor = PanelWhite,
-                AutoSize = true,
-                Location = new Point(24, 18)
-            };
-
-            btnEdit = MakeToolbarBtn("Edit", 0);
-            btnEmail = MakeToolbarBtn("Email", 0);
-            btnPdfPrint = MakeToolbarBtn("PDF/Print", 0);
-            btnCreateMenu = MakeToolbarBtn("Create ▾", 0);
-            btnCreateMenu.BackColor = AccGreen;
-            btnCreateMenu.ForeColor = Color.White;
-
-            btnEdit.Click += (s, e) => ShowBuilderStatusToast("Edit isn't available from the return screen.", false);
-            btnEmail.Click += (s, e) => ShowBuilderStatusToast("Email isn't available from the return screen.", false);
-            btnPdfPrint.Click += (s, e) => ShowBuilderStatusToast("Open a processed return to print its receipt.", false);
-
-            mnuCreate = new ContextMenuStrip();
-            var miReturn = new ToolStripMenuItem("Sales Return");
-            miReturn.Click += (s, e) => ShowReturnBuilder();
-            mnuCreate.Items.Add(miReturn);
-            btnCreateMenu.Click += (s, e) => mnuCreate.Show(btnCreateMenu, new Point(0, btnCreateMenu.Height));
-
-            pnlDetailToolbar.Controls.AddRange(new Control[] { lblOrderNumberHeader, btnEdit, btnEmail, btnPdfPrint, btnCreateMenu });
-            pnlDetailToolbar.SizeChanged += (s, e) => LayoutToolbarButtons();
-            pnlRightDetail.Controls.Add(pnlDetailToolbar);
-        }
-
-        // Sticky footer, always docked to the bottom of the detail panel. Hidden
-        // while browsing order details; shown only while the return builder is
-        // active, so Process Return / Cancel are always on-screen and reachable
-        // no matter how tall the scrollable content above them is, or how small
-        // the window/screen is.
-        private void BuildBuilderFooter()
-        {
-            pnlBuilderFooter = new Panel { Dock = DockStyle.Bottom, Height = 64, BackColor = PanelWhite, Visible = false };
-            pnlBuilderFooter.Paint += (s, e) =>
-            {
-                using var pen = new Pen(BorderColor, 1f);
-                e.Graphics.DrawLine(pen, 0, 0, pnlBuilderFooter.Width, 0);
-            };
-
-            lblBuilderStatus = new Label
-            {
-                Text = "",
+                Text = "Select a customer to begin a return.",
                 Font = new Font("Segoe UI", 8.5F),
                 ForeColor = TextMid,
-                BackColor = PanelWhite,
+                BackColor = Color.Transparent,
                 AutoSize = false,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Bottom,
-                Location = new Point(24, 8),
-                Size = new Size(400, 20),
+                Size = new Size(460, FOOTER_H),
+                Location = new Point(16, 0),
                 TextAlign = ContentAlignment.MiddleLeft
             };
-            lblRefundTotalFooter = new Label
-            {
-                Text = "",
-                Font = new Font("Segoe UI", 8.5F),
-                ForeColor = TextMid,
-                BackColor = PanelWhite,
-                AutoSize = false,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Bottom,
-                Location = new Point(24, 30),
-                Size = new Size(400, 20),
-                TextAlign = ContentAlignment.MiddleLeft
-            };
-            _detailFooterStatusLine1 = lblBuilderStatus;
-            _detailFooterStatusLine2 = lblRefundTotalFooter;
 
-            btnCancelReturn = new Button
-            {
-                Text = "Cancel",
-                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
-                ForeColor = TextMid,
-                BackColor = Color.FromArgb(238, 237, 231),
-                FlatStyle = FlatStyle.Flat,
-                Size = new Size(90, 36),
-                Anchor = AnchorStyles.Top | AnchorStyles.Right,
-                Cursor = Cursors.Hand
-            };
-            btnCancelReturn.FlatAppearance.BorderSize = 0;
-            btnCancelReturn.Region = MakeRoundedRegion(btnCancelReturn.Size, 6);
-            btnCancelReturn.Click += (s, e) => BackToOrderDetail();
+            btnCancel = MakeFooterBtn("Cancel", Color.FromArgb(229, 231, 235), TextMid, new Size(100, 40));
+            btnCancel.Click += (s, e) => Close();
 
-            btnProcessReturn = new Button
-            {
-                Text = "Process Return",
-                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
-                ForeColor = Color.White,
-                BackColor = AccGreen,
-                FlatStyle = FlatStyle.Flat,
-                Size = new Size(160, 36),
-                Enabled = false,
-                Anchor = AnchorStyles.Top | AnchorStyles.Right,
-                Cursor = Cursors.Hand
-            };
-            btnProcessReturn.FlatAppearance.BorderSize = 0;
-            btnProcessReturn.Region = MakeRoundedRegion(btnProcessReturn.Size, 6);
+            btnProcessReturn = MakeFooterBtn("Process Return", AccGreen, Color.White, new Size(160, 40));
+            btnProcessReturn.Enabled = false;
             btnProcessReturn.Click += BtnProcessReturn_Click;
 
-            void LayoutFooterButtons()
-            {
-                int midY = (pnlBuilderFooter.Height - 36) / 2;
-                btnProcessReturn.Location = new Point(pnlBuilderFooter.Width - 24 - btnProcessReturn.Width, midY);
-                btnCancelReturn.Location = new Point(btnProcessReturn.Left - 10 - btnCancelReturn.Width, midY);
-                int labelW = Math.Max(80, btnCancelReturn.Left - 24 - 24);
-                lblBuilderStatus.Width = labelW;
-                lblRefundTotalFooter.Width = labelW;
-            }
-            pnlBuilderFooter.SizeChanged += (s, e) => LayoutFooterButtons();
-            LayoutFooterButtons();
-
-            pnlBuilderFooter.Controls.AddRange(new Control[] { lblBuilderStatus, lblRefundTotalFooter, btnCancelReturn, btnProcessReturn });
-            pnlRightDetail.Controls.Add(pnlBuilderFooter);
-        }
-        private Label _detailFooterStatusLine1, _detailFooterStatusLine2;
-
-        private void LayoutToolbarButtons()
-        {
-            int right = pnlDetailToolbar.Width - 20;
-            right -= btnCreateMenu.Width; btnCreateMenu.Location = new Point(right, 14); right -= 10;
-            right -= btnPdfPrint.Width; btnPdfPrint.Location = new Point(right, 14); right -= 10;
-            right -= btnEmail.Width; btnEmail.Location = new Point(right, 14); right -= 10;
-            right -= btnEdit.Width; btnEdit.Location = new Point(right, 14);
-        }
-
-        private Button MakeToolbarBtn(string text, int x)
-        {
-            var b = new Button
-            {
-                Text = text,
-                Font = new Font("Segoe UI", 9F, FontStyle.Bold),
-                ForeColor = TextMid,
-                BackColor = Color.FromArgb(238, 237, 231),
-                FlatStyle = FlatStyle.Flat,
-                AutoSize = true,
-                Padding = new Padding(10, 4, 10, 4),
-                Height = 34,
-                Location = new Point(x, 14),
-                Cursor = Cursors.Hand
-            };
-            b.FlatAppearance.BorderSize = 0;
-            return b;
-        }
-
-        private void BuildDetailBodyHost()
-        {
-            pnlDetailBody = new Panel { Dock = DockStyle.Fill, BackColor = BgPage, AutoScroll = true, Visible = false };
-            pnlRightDetail.Controls.Add(pnlDetailBody);
-
-            BuildOrderDetailView();
-            BuildReturnBuilderView();
-        }
-
-        // ── Order detail view ───────────────────────────────────────────────
-        private Label lblStatusOrder, lblStatusInvoice, lblStatusPayment, lblStatusShipment;
-        private Label lblMetaOrderDate, lblMetaRegister, lblMetaFulfillment, lblMetaTerms, lblMetaChannel;
-        private Label lblBillingName, lblShippingName, lblShippingHeading;
-        private Panel _leftDetailCard, _rightDetailCard;
-        private Label _lblSoNo;
-
-        private void BuildOrderDetailView()
-        {
-            pnlOrderDetailView = new Panel { BackColor = BgPage, AutoSize = true, Location = new Point(0, 0), Width = 1, Visible = false };
-            pnlDetailBody.Controls.Add(pnlOrderDetailView);
-            pnlDetailBody.SizeChanged += (s, e) =>
-            {
-                pnlOrderDetailView.Width = Math.Max(1, pnlDetailBody.ClientSize.Width);
-                pnlReturnBuilderView.Width = Math.Max(1, pnlDetailBody.ClientSize.Width);
-                RelayoutOrderDetailCards();
-            };
-
-            // Left card — Sales Order summary. Width is now RECOMPUTED from the
-            // available body width (percentage based) instead of a fixed 620px,
-            // so the layout no longer breaks on narrower / higher-res screens.
-            var leftCard = MakeDetailCard(new Point(24, 24), 620);
-            _leftDetailCard = leftCard;
-            AddCardHeading(leftCard, "SALES ORDER", TextLight, 8F);
-
-            // "Sales Order# ..." — placed with generous clearance below the
-            // heading, and given its own reserved band so it can never collide
-            // with the status-chip row beneath it (previous bug: fixed y=20/56
-            // offsets plus transparent AutoSize labels caused ghosted overlap
-            // when text length changed between selections).
-            _lblSoNo = new Label
+            lblRefundTotal = new Label
             {
                 Text = "",
-                Name = "soNo",
                 Font = new Font("Segoe UI", 12F, FontStyle.Bold),
                 ForeColor = TextDark,
-                BackColor = PanelWhite,
-                AutoSize = true,
-                Location = new Point(0, 22)
+                BackColor = Color.Transparent,
+                AutoSize = false,
+                Size = new Size(280, FOOTER_H),
+                TextAlign = ContentAlignment.MiddleRight,
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Right
             };
-            leftCard.Controls.Add(_lblSoNo);
 
-            // status chip row — pushed down to a fixed band that starts AFTER
-            // the tallest possible "Sales Order#" label (12pt bold "text" at
-            // 150% DPI is ~34px), with extra breathing room.
-            int chipY = 68;
-            lblStatusOrder = AddStatusChip(leftCard, "ORDER", "CONFIRMED", AccAmber, 0, chipY);
-            lblStatusInvoice = AddStatusChip(leftCard, "INVOICE", "Invoiced", AccentBlue, 150, chipY);
-            lblStatusPayment = AddStatusChip(leftCard, "PAYMENT", "Paid", AccGreen, 300, chipY);
-            lblStatusShipment = AddStatusChip(leftCard, "SHIPMENT", "Fulfilled", AccGreen, 450, chipY);
+            panelFooter.Controls.AddRange(new Control[] { lblStatus, btnCancel, btnProcessReturn, lblRefundTotal });
+            panelFooter.SizeChanged += (s, e) => LayoutFooterButtons();
+            Controls.Add(panelFooter);
+        }
 
-            int dividerY = chipY + 46;
-            var divider = new Panel { BackColor = BorderColor, Size = new Size(1, 1), Location = new Point(0, dividerY), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
-            divider.Paint += (s, e) => { divider.Width = leftCard.Width - 40; };
-            leftCard.Controls.Add(divider);
+        private void BuildScrollArea()
+        {
+            _scrollOuter = new Panel { BackColor = BgPage, Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(0) };
+            Controls.Add(_scrollOuter);
 
-            int mY = dividerY + 14;
-            lblMetaOrderDate = AddMetaRow(leftCard, "Order Date", ref mY);
-            lblMetaRegister = AddMetaRow(leftCard, "Register Name", ref mY);
-            lblMetaFulfillment = AddMetaRow(leftCard, "Fulfillment Status", ref mY);
-            lblMetaTerms = AddMetaRow(leftCard, "Payment Terms", ref mY);
-            lblMetaChannel = AddMetaRow(leftCard, "Sales Channel", ref mY);
-            leftCard.Tag = mY + 20; // desired height
+            panelContent = new Panel { BackColor = BgPage, AutoSize = true, Width = _scrollOuter.ClientSize.Width };
+            _scrollOuter.Controls.Add(panelContent);
+            _scrollOuter.SizeChanged += (s, e) => { panelContent.Width = _scrollOuter.ClientSize.Width; RelayoutCards(); };
 
-            // Right card — Billing / Shipping address
-            var rightCard = MakeDetailCard(new Point(24 + 620 + 20, 24), 300);
-            _rightDetailCard = rightCard;
-            AddCardHeading(rightCard, "BILLING ADDRESS", TextLight, 8F);
-            lblBillingName = new Label
+            BuildCustomerCard();
+            BuildInvoiceListCard();
+            BuildCandidateLinesCard();
+            BuildReturnDetailsCard();
+            BuildItemsCard();
+            BuildSummaryCard();
+            RelayoutCards();
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        //  CARD 1 — CUSTOMER PICKER   (concept: React's Customer dropdown)
+        // ══════════════════════════════════════════════════════════════════
+        private Panel _cardCustomer;
+        private void BuildCustomerCard()
+        {
+            _cardCustomer = MakeCard();
+            AddCardLabel(_cardCustomer, "Customer", 0, new Font("Segoe UI", 9F, FontStyle.Bold), TextDark);
+
+            cmbCustomer = new ComboBox
             {
-                Text = "",
-                Font = new Font("Segoe UI", 9.5F),
+                Font = new Font("Segoe UI", 10.5F),
                 ForeColor = TextDark,
-                BackColor = PanelWhite,
-                AutoSize = true,
-                Location = new Point(0, 22),
-                MaximumSize = new Size(260, 0)
+                BackColor = Color.FromArgb(28, 32, 42),
+                FlatStyle = FlatStyle.Flat,
+                DropDownStyle = ComboBoxStyle.DropDown,
+                AutoCompleteMode = AutoCompleteMode.SuggestAppend,
+                AutoCompleteSource = AutoCompleteSource.ListItems,
+                DisplayMember = "CustomerName",
+                Size = new Size(420, 30),
+                Location = new Point(0, 34)
             };
-            rightCard.Controls.Add(lblBillingName);
+            cmbCustomer.SelectedIndexChanged += (s, e) =>
+            {
+                if (cmbCustomer.SelectedItem is POSAPP.CustomerFullDto cs)
+                {
+                    _selectedCustomerName = cs.CustomerName;
+                    LoadCustomerInvoices();
+                }
+            };
 
-            lblShippingHeading = new Label
+            _cardCustomer.Controls.Add(cmbCustomer);
+            panelContent.Controls.Add(_cardCustomer);
+        }
+
+        private async void LoadCustomers()
+        {
+            try
             {
-                Text = "SHIPPING ADDRESS",
-                Font = new Font("Segoe UI", 8F, FontStyle.Bold),
-                ForeColor = TextLight,
-                BackColor = PanelWhite,
-                AutoSize = true,
-                Location = new Point(0, 70)
-            };
-            rightCard.Controls.Add(lblShippingHeading);
-            lblShippingName = new Label
+                _customers = await SalesReturnRepository.GetActiveCustomersAsync(_companyId)
+                             ?? new List<POSAPP.CustomerFullDto>();
+            }
+            catch (Exception ex)
             {
-                Text = "",
-                Font = new Font("Segoe UI", 9.5F),
+                ShowStatus("Could not load customers: " + ex.Message, false);
+                _customers = new List<POSAPP.CustomerFullDto>();
+            }
+            cmbCustomer.Items.Clear();
+            cmbCustomer.Items.AddRange(_customers.Cast<object>().ToArray());
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        //  CARD 2 — INVOICES FOR THE SELECTED CUSTOMER  (React's invoice grid)
+        // ══════════════════════════════════════════════════════════════════
+        private Panel _cardInvoiceList;
+        private Label _lblInvoiceListHead;
+
+        private void BuildInvoiceListCard()
+        {
+            _cardInvoiceList = MakeCard();
+            _cardInvoiceList.Visible = false;
+
+            _lblInvoiceListHead = new Label
+            {
+                Text = "Invoices",
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
                 ForeColor = TextDark,
-                BackColor = PanelWhite,
-                AutoSize = true,
-                Location = new Point(0, 92),
-                MaximumSize = new Size(260, 0)
-            };
-            rightCard.Controls.Add(lblShippingName);
-
-            pnlOrderDetailView.Controls.Add(leftCard);
-            pnlOrderDetailView.Controls.Add(rightCard);
-
-            RelayoutOrderDetailCards();
-        }
-
-        // Recomputes card widths/heights/positions from the AVAILABLE WIDTH of
-        // the body panel (percentage split) and from actual control sizes (not
-        // fixed offsets), so:
-        //   1) wrapped address text can never overlap the next label,
-        //   2) the two cards reflow correctly at any window / screen resolution,
-        //   3) the whole card + its children are repainted after every text
-        //      change (fixes the "ghost text" overlap seen when switching
-        //      between orders with different-length order numbers),
-        //   4) on narrow windows the right (address) card drops BELOW the left
-        //      card instead of being squeezed into negative/near-zero width,
-        //      which is what was causing the order-detail area to look cropped.
-        private void RelayoutOrderDetailCards()
-        {
-            if (_leftDetailCard == null || _rightDetailCard == null) return;
-
-            int bodyW = Math.Max(1, pnlOrderDetailView.Width);
-            int margin = 24;
-            int gap = 20;
-
-            const int STACK_BREAKPOINT = 760;
-            bool stacked = bodyW < STACK_BREAKPOINT;
-
-            int leftW, rightW;
-            if (stacked)
-            {
-                // Narrow window: both cards take the full available width, stacked
-                // vertically, so nothing gets clipped on the side.
-                leftW = Math.Max(260, bodyW - margin * 2);
-                rightW = leftW;
-            }
-            else
-            {
-                rightW = Math.Max(260, (int)(bodyW * 0.24));
-                leftW = Math.Max(480, bodyW - margin * 2 - gap - rightW);
-            }
-
-            _leftDetailCard.Location = new Point(margin, margin);
-            _leftDetailCard.Width = leftW;
-            _leftDetailCard.Height = (int)_leftDetailCard.Tag;
-
-            // Billing block, then shipping heading directly below it, then shipping name.
-            const int addrGap = 18;
-            lblShippingHeading.Location = new Point(0, lblBillingName.Bottom + addrGap);
-            lblShippingName.Location = new Point(0, lblShippingHeading.Bottom + 6);
-
-            if (stacked)
-                _rightDetailCard.Location = new Point(margin, _leftDetailCard.Bottom + gap);
-            else
-                _rightDetailCard.Location = new Point(_leftDetailCard.Right + gap, margin);
-            _rightDetailCard.Width = rightW;
-            _rightDetailCard.Height = lblShippingName.Bottom + 20;
-
-            pnlOrderDetailView.Height = Math.Max(_leftDetailCard.Bottom, _rightDetailCard.Bottom) + 24;
-
-            // Force a full repaint of both cards so no stale glyph pixels from a
-            // previous selection's longer/shorter text can linger underneath.
-            _leftDetailCard.Invalidate(true);
-            _rightDetailCard.Invalidate(true);
-        }
-
-        private Panel MakeDetailCard(Point loc, int width)
-        {
-            var p = new Panel { BackColor = PanelWhite, Location = loc, Size = new Size(width, 100), Padding = new Padding(CARD_PAD) };
-            p.Paint += (s, e) =>
-            {
-                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-                e.Graphics.Clear(PanelWhite);
-                using var pen = new Pen(BorderColor, 1f);
-                using var path = RoundedPath(new Rectangle(0, 0, p.Width - 1, p.Height - 1), CARD_RADIUS);
-                e.Graphics.DrawPath(pen, path);
-            };
-            // Children are positioned relative to (0,0) in code, so offset the
-            // actual content by the card's padding via an inner host panel would
-            // require re-plumbing every call site; instead we simply inset the
-            // card's drawn border/background from its own edges and let content
-            // start at CARD_PAD via each control's own Location math below.
-            return p;
-        }
-
-        private void AddCardHeading(Panel card, string text, Color color, float size)
-        {
-            card.Controls.Add(new Label
-            {
-                Text = text,
-                Font = new Font("Segoe UI", size, FontStyle.Bold),
-                ForeColor = color,
-                BackColor = card.BackColor,
+                BackColor = Color.Transparent,
                 AutoSize = true,
                 Location = new Point(0, 0)
-            });
-        }
-
-        private Label AddStatusChip(Panel card, string caption, string value, Color valueColor, int x, int y)
-        {
-            card.Controls.Add(new Label
-            {
-                Text = caption,
-                Font = new Font("Segoe UI", 7.2F, FontStyle.Bold),
-                ForeColor = TextLight,
-                BackColor = card.BackColor,
-                AutoSize = true,
-                Location = new Point(x, y)
-            });
-            var val = new Label
-            {
-                Text = value,
-                Font = new Font("Segoe UI", 9F, FontStyle.Bold),
-                ForeColor = valueColor,
-                BackColor = card.BackColor,
-                AutoSize = true,
-                Location = new Point(x, y + 16)
             };
-            card.Controls.Add(val);
-            return val;
+
+            flowInvoices = new FlowLayoutPanel
+            {
+                Location = new Point(0, 30),
+                AutoSize = true,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = true,
+                BackColor = Color.Transparent
+            };
+
+            _cardInvoiceList.Controls.Add(_lblInvoiceListHead);
+            _cardInvoiceList.Controls.Add(flowInvoices);
+            panelContent.Controls.Add(_cardInvoiceList);
         }
 
-        private Label AddMetaRow(Panel card, string caption, ref int y)
+        private void LoadCustomerInvoices()
         {
-            card.Controls.Add(new Label
+            if (string.IsNullOrWhiteSpace(_selectedCustomerName)) return;
+
+            try
             {
-                Text = caption,
-                Font = new Font("Segoe UI", 8.5F),
-                ForeColor = TextMid,
-                BackColor = card.BackColor,
+                _customerInvoices = SalesReturnRepository.GetInvoicesForCustomer(_selectedCustomerName, _companyId)
+                                     ?? new List<InvoiceLite>();
+            }
+            catch (Exception ex)
+            {
+                ShowStatus("Could not load invoices: " + ex.Message, false);
+                _customerInvoices = new List<InvoiceLite>();
+            }
+
+            _activeInvoiceNo = null;
+            _cardCandidateLines.Visible = false;
+            RebuildInvoiceCards();
+            _cardInvoiceList.Visible = true;
+            RelayoutCards();
+
+            ShowStatus(_customerInvoices.Count == 0
+                ? $"No invoices found for {_selectedCustomerName}."
+                : $"{_customerInvoices.Count} invoice(s) found for {_selectedCustomerName}. Select one to view items.", true);
+        }
+
+        private void RebuildInvoiceCards()
+        {
+            foreach (Control c in flowInvoices.Controls) c.Dispose();
+            flowInvoices.Controls.Clear();
+
+            foreach (var inv in _customerInvoices)
+            {
+                var card = new Panel
+                {
+                    Size = new Size(220, 78),
+                    Margin = new Padding(0, 0, 10, 10),
+                    BackColor = Color.FromArgb(28, 32, 42),
+                    Cursor = Cursors.Hand,
+                    Tag = inv.InvoiceNo
+                };
+                DrawRoundedBorder(card, InputBorder, 8);
+
+                var lblNo = new Label
+                {
+                    Text = inv.InvoiceNo,
+                    Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+                    ForeColor = AccBlue,
+                    BackColor = Color.Transparent,
+                    AutoSize = true,
+                    Location = new Point(12, 10)
+                };
+                var lblDate = new Label
+                {
+                    Text = inv.InvoiceDate.ToString("dd MMM yyyy"),
+                    Font = new Font("Segoe UI", 8.5F),
+                    ForeColor = TextMid,
+                    BackColor = Color.Transparent,
+                    AutoSize = true,
+                    Location = new Point(12, 32)
+                };
+                var lblTotal = new Label
+                {
+                    Text = Fmt(inv.Total),
+                    Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
+                    ForeColor = TextDark,
+                    BackColor = Color.Transparent,
+                    AutoSize = true,
+                    Location = new Point(12, 52)
+                };
+
+                card.Controls.AddRange(new Control[] { lblNo, lblDate, lblTotal });
+                EventHandler clickHandler = (s, e) => SelectInvoice(inv.InvoiceNo);
+                card.Click += clickHandler;
+                foreach (Control child in card.Controls) child.Click += clickHandler;
+
+                flowInvoices.Controls.Add(card);
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        //  CARD 3 — CANDIDATE LINES OF THE BROWSED INVOICE
+        //  (React: "Return Lines" table with a Return Qty box + Add button)
+        // ══════════════════════════════════════════════════════════════════
+        private Panel _cardCandidateLines;
+        private Panel panelCandidateHeader;
+
+        private void BuildCandidateLinesCard()
+        {
+            _cardCandidateLines = MakeCard();
+            _cardCandidateLines.Visible = false;
+
+            panelCandidateHeader = new Panel { BackColor = Color.Transparent, Size = new Size(1, 28), Location = Point.Empty };
+
+            lblCandidateHeader = new Label
+            {
+                Text = "Invoice Items",
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+                ForeColor = TextDark,
+                BackColor = Color.Transparent,
                 AutoSize = true,
-                Location = new Point(0, y),
-                Size = new Size(160, 18)
-            });
-            var val = new Label
+                Location = new Point(0, 4)
+            };
+
+            btnBackToInvoices = new Button
             {
-                Text = "",
+                Text = "← Back to Invoices",
+                Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
+                ForeColor = AccBlue,
+                BackColor = Color.Transparent,
+                FlatStyle = FlatStyle.Flat,
+                AutoSize = true,
+                Cursor = Cursors.Hand,
+                Location = new Point(220, 4)
+            };
+            btnBackToInvoices.FlatAppearance.BorderSize = 0;
+            btnBackToInvoices.Click += (s, e) =>
+            {
+                _activeInvoiceNo = null;
+                _cardCandidateLines.Visible = false;
+                RelayoutCards();
+            };
+
+            panelCandidateHeader.Controls.AddRange(new Control[] { lblCandidateHeader, btnBackToInvoices });
+            _cardCandidateLines.Controls.Add(panelCandidateHeader);
+
+            panelCandidateLines = new Panel { BackColor = Color.Transparent, AutoSize = true, Location = new Point(0, 36), Width = 1 };
+            _cardCandidateLines.Controls.Add(panelCandidateLines);
+            _cardCandidateLines.AutoSize = true;
+            panelContent.Controls.Add(_cardCandidateLines);
+        }
+
+
+        private async void SelectInvoice(string invoiceNo)
+        {
+            var rows = SalesReturnRepository.LoadOriginalInvoiceLines(invoiceNo, _companyId);
+            if (rows == null || rows.Count == 0)
+            { ShowStatus($"Invoice '{invoiceNo}' has no line items.", false); return; }
+
+            DateTime? invoiceDate = SalesReturnRepository.GetInvoiceSaleDate(invoiceNo);
+            if (invoiceDate.HasValue)
+            {
+                int daysSinceSale = (DateTime.Today - invoiceDate.Value.Date).Days;
+                if (daysSinceSale > MAX_RETURN_DAYS)
+                {
+                    MessageBox.Show(
+                        $"This invoice cannot be returned.\n\n" +
+                        $"Invoice Date : {invoiceDate.Value:dd MMM yyyy}\n" +
+                        $"Days Elapsed : {daysSinceSale} day(s)\n" +
+                        $"Return Window: {MAX_RETURN_DAYS} days\n\n" +
+                        "The return period has expired.",
+                        "Return Period Expired", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    ShowStatus($"Invoice {invoiceNo} is {daysSinceSale} days old (max {MAX_RETURN_DAYS}).", false);
+                    return;
+                }
+            }
+
+            var alreadyReturned = await SalesReturnRepository.GetReturnedQtysAsync(invoiceNo);
+
+            _candidateLines = new List<CandidateLine>();
+            foreach (var r in rows)
+            {
+                int previouslyReturned = 0;
+                foreach (var kv in alreadyReturned)
+                {
+                    if (string.Equals(kv.Key.Trim(), r.ItemName.Trim(), StringComparison.OrdinalIgnoreCase) ||
+                        (!string.IsNullOrWhiteSpace(r.Barcode) && string.Equals(kv.Key.Trim(), r.Barcode.Trim(), StringComparison.OrdinalIgnoreCase)))
+                    { previouslyReturned = kv.Value; break; }
+                }
+
+                // Also subtract quantity already added to THIS in-progress return, from any invoice.
+                string key = $"{invoiceNo}|{r.ItemName}|{r.Barcode}";
+                int alreadyInThisReturn = _returnLines.Where(l => l.SourceKey == key).Sum(l => l.ReturnQty);
+
+                int remainingQty = r.Qty - previouslyReturned - alreadyInThisReturn;
+                if (remainingQty <= 0) continue;
+
+                _candidateLines.Add(new CandidateLine
+                {
+                    SourceKey = key,
+                    InvoiceNo = invoiceNo,
+                    Name = r.ItemName,
+                    UnitPrice = r.UnitPrice,
+                    DiscountPct = r.DiscountPct,
+                    TaxPct = r.TaxPct,
+                    UOM = string.IsNullOrWhiteSpace(r.UOM) ? "EA" : r.UOM,
+                    Barcode = r.Barcode,
+                    PurchasedQty = remainingQty,
+                    ReturnQty = 0,
+                    Added = _returnLines.Any(l => l.SourceKey == key)
+                });
+            }
+
+            _activeInvoiceNo = invoiceNo;
+            lblCandidateHeader.Text = $"Invoice Items — {invoiceNo}";
+            RebuildCandidateRows();
+            _cardCandidateLines.Visible = true;
+            RelayoutCards();
+
+            ShowStatus(_candidateLines.Count == 0
+                ? $"Invoice {invoiceNo} has already been fully returned."
+                : $"{_candidateLines.Count} returnable line(s) on {invoiceNo}. Set a Return Qty and click Add.", true);
+        }
+
+        private void RebuildCandidateRows()
+        {
+            foreach (Control c in panelCandidateLines.Controls) c.Dispose();
+            panelCandidateLines.Controls.Clear();
+
+            int y = 0;
+            for (int i = 0; i < _candidateLines.Count; i++)
+            {
+                panelCandidateLines.Controls.Add(BuildCandidateRow(_candidateLines[i], y, i % 2 == 0));
+                y += 46;
+            }
+            panelCandidateLines.Height = Math.Max(1, y);
+            RelayoutCards();
+        }
+
+        private Panel BuildCandidateRow(CandidateLine c, int yOffset, bool alt)
+        {
+            const int ROW_H = 44;
+            int rowW = Math.Max(1, panelCandidateLines.Width);
+
+            var row = new Panel
+            {
+                BackColor = alt ? CardWhite : RowAlt,
+                Size = new Size(rowW, ROW_H),
+                Location = new Point(0, yOffset),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+            };
+
+            row.Controls.Add(new Label
+            {
+                Text = c.Name,
                 Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
                 ForeColor = TextDark,
-                BackColor = card.BackColor,
-                AutoSize = true,
-                Location = new Point(170, y)
-            };
-            card.Controls.Add(val);
-            y += 26;
-            return val;
-        }
+                BackColor = Color.Transparent,
+                Size = new Size(220, ROW_H),
+                Location = new Point(8, 0),
+                TextAlign = ContentAlignment.MiddleLeft
+            });
 
-        // ══════════════════════════════════════════════════════════════════
-        //  SELECT ORDER  →  populate order-detail view
-        // ══════════════════════════════════════════════════════════════════
-        private void SelectOrder(OrderRow row, Panel rowPanel)
-        {
-            _selectedOrder = row;
-            _selectedCustomerId = row.Customer.CustomerID;
-            _selectedCustomerName = row.Customer.CustomerName;
-
-            if (_selectedRowPanel != null)
+            row.Controls.Add(new Label
             {
-                _selectedRowPanel.BackColor = PanelWhite;
-                foreach (Control c in _selectedRowPanel.Controls) c.BackColor = PanelWhite;
-                _selectedRowPanel.Invalidate(true);
-            }
-            rowPanel.BackColor = RowSelectedBg;
-            foreach (Control c in rowPanel.Controls) c.BackColor = RowSelectedBg;
-            rowPanel.Invalidate(true);
-            _selectedRowPanel = rowPanel;
+                Text = $"Qty: {c.PurchasedQty}",
+                Font = new Font("Segoe UI", 8.5F),
+                ForeColor = TextMid,
+                BackColor = Color.Transparent,
+                Size = new Size(70, ROW_H),
+                Location = new Point(236, 0),
+                TextAlign = ContentAlignment.MiddleCenter
+            });
 
-            var inv = row.Invoice.Header;
-            lblOrderNumberHeader.Text = inv.InvoiceNo;
-
-            _lblSoNo.Text = $"Sales Order# {inv.InvoiceNo}";
-
-            lblStatusOrder.Text = row.IsFullyReturned ? "RETURNED" : "CONFIRMED";
-            lblStatusOrder.ForeColor = row.IsFullyReturned ? AccRed : AccAmber;
-
-            lblMetaOrderDate.Text = inv.InvoiceDate.ToString("dd MMM yyyy");
-            lblMetaRegister.Text = "Mobile POS";                 // TODO: wire real register name once tracked
-            lblMetaFulfillment.Text = "Fulfilled";                // TODO: wire real fulfillment status
-            lblMetaTerms.Text = "Due On Receipt";                 // TODO: wire real payment terms
-            lblMetaChannel.Text = "Point of Sale";
-
-            lblBillingName.Text = string.IsNullOrWhiteSpace(row.Customer.CustomerName)
-                ? "Walk-in Customer" : row.Customer.CustomerName + "\n(address not on file)";
-            lblShippingName.Text = lblBillingName.Text;
-
-            // 1) Flip visibility and reset scroll BEFORE measuring/positioning anything —
-            //    doing this after RelayoutOrderDetailCards() is what let stale bounds
-            //    leak into the paint and caused the right card to overlap the toolbar.
-            lblNoSelection.Visible = false;
-            pnlDetailToolbar.Visible = true;
-            pnlBuilderFooter.Visible = false;      // no footer while just viewing order details
-            pnlDetailBody.Visible = true;
-            pnlOrderDetailView.Visible = true;
-            pnlReturnBuilderView.Visible = false;
-            pnlDetailBody.AutoScrollPosition = Point.Empty;   // don't inherit scroll offset from a previous view
-
-            // 2) Force the Dock/layout engine to settle NOW, so ClientSize/offsets
-            //    used below are correct instead of reflecting the pre-selection state.
-            pnlRightDetail.PerformLayout();
-            pnlDetailBody.PerformLayout();
-
-            // 3) Only now compute card positions/sizes from the settled layout.
-            RelayoutOrderDetailCards();
-
-            // 4) Repaint clean — clears any stale text/border pixels from the previous selection.
-            pnlOrderDetailView.Invalidate(true);
-            pnlDetailBody.Invalidate(true);
-
-            ShowBuilderStatusToast("", true);
-
-            // Make sure the row we just selected is actually visible in the left list,
-            // not clipped under pnlListHeader.
-            pnlOrderRowsScroll.ScrollControlIntoView(rowPanel);
-        }
-
-        // ══════════════════════════════════════════════════════════════════
-        //  RETURN BUILDER VIEW
-        // ══════════════════════════════════════════════════════════════════
-        private Panel _linesCard, _cartCard, _detailsCard;
-
-        private void BuildReturnBuilderView()
-        {
-            pnlReturnBuilderView = new Panel { BackColor = BgPage, AutoSize = true, Location = new Point(0, 0), Width = 1, Visible = false };
-            pnlDetailBody.Controls.Add(pnlReturnBuilderView);
-
-            var backBar = new Panel { BackColor = BgPage, Size = new Size(1, 36), Location = new Point(24, 16) };
-            var btnBack = new LinkLabel
+            row.Controls.Add(new Label
             {
-                Text = "← Back to order",
-                Font = new Font("Segoe UI", 9F, FontStyle.Bold),
-                LinkColor = AccGreen,
-                ActiveLinkColor = AccGreen,
-                VisitedLinkColor = AccGreen,
-                BackColor = BgPage,
-                AutoSize = true,
-                Location = new Point(0, 0)
-            };
-            btnBack.Click += (s, e) => BackToOrderDetail();
-            backBar.Controls.Add(btnBack);
-            pnlReturnBuilderView.Controls.Add(backBar);
+                Text = c.UOM,
+                Font = new Font("Segoe UI", 8.5F),
+                ForeColor = AccCyan,
+                BackColor = Color.Transparent,
+                Size = new Size(44, ROW_H),
+                Location = new Point(306, 0),
+                TextAlign = ContentAlignment.MiddleCenter
+            });
 
-            lblReturnBuilderInvoice = new Label
+            row.Controls.Add(new Label
             {
-                Text = "Return Items",
-                Font = new Font("Segoe UI", 12F, FontStyle.Bold),
+                Text = Fmt(c.UnitPrice),
+                Font = new Font("Segoe UI", 8.5F),
+                ForeColor = TextMid,
+                BackColor = Color.Transparent,
+                Size = new Size(84, ROW_H),
+                Location = new Point(354, 0),
+                TextAlign = ContentAlignment.MiddleLeft
+            });
+
+            var tbQty = new TextBox
+            {
+                Text = c.ReturnQty > 0 ? c.ReturnQty.ToString() : "",
+                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
                 ForeColor = TextDark,
-                BackColor = BgPage,
-                AutoSize = true,
-                Location = new Point(24, 40)
+                BackColor = Color.FromArgb(42, 46, 58),
+                BorderStyle = BorderStyle.FixedSingle,
+                TextAlign = HorizontalAlignment.Center,
+                Size = new Size(56, 26),
+                Location = new Point(446, (ROW_H - 26) / 2),
+                Enabled = !c.Added
             };
-            pnlReturnBuilderView.Controls.Add(lblReturnBuilderInvoice);
-
-            // Card: invoice lines
-            var linesCard = MakeDetailCard(new Point(24, 76), 900);
-            _linesCard = linesCard;
-            AddCardHeading(linesCard, "INVOICE ITEMS", TextLight, 8F);
-            var hdr = new Panel { BackColor = PanelAlt, Size = new Size(1, 26), Location = new Point(0, 22), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
-            hdr.Paint += (s, e) => { hdr.Width = linesCard.Width - 40; e.Graphics.Clear(PanelAlt); };
-            string[] hdrs = { "Item Name", "Purchased", "UOM", "Price", "Return Qty", "" };
-            int[] hdrX = { 0, 220, 290, 330, 410, 550 };
-            foreach (var (t, x) in hdrs.Zip(hdrX, (a, b) => (a, b)))
-                hdr.Controls.Add(new Label { Text = t, Font = new Font("Segoe UI", 7.5F, FontStyle.Bold), ForeColor = TextMid, BackColor = PanelAlt, AutoSize = true, Location = new Point(x, 6) });
-            linesCard.Controls.Add(hdr);
-
-            panelInvoiceLineRows = new Panel { BackColor = PanelWhite, AutoSize = true, Location = new Point(0, 54), Width = 1 };
-            linesCard.Controls.Add(panelInvoiceLineRows);
-            pnlReturnBuilderView.Controls.Add(linesCard);
-
-            // Card: cart
-            var cartCard = MakeDetailCard(new Point(24, 0), 900);
-            _cartCard = cartCard;
-            AddCardHeading(cartCard, "ITEMS IN THIS RETURN", TextLight, 8F);
-            var cartHdr = new Panel { BackColor = PanelAlt, Size = new Size(1, 26), Location = new Point(0, 22), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
-            cartHdr.Paint += (s, e) => { cartHdr.Width = cartCard.Width - 40; e.Graphics.Clear(PanelAlt); };
-            string[] cHdrs = { "Invoice", "Item Name", "Qty", "UOM", "Refund", "" };
-            int[] cHdrX = { 0, 120, 340, 380, 430, 550 };
-            foreach (var (t, x) in cHdrs.Zip(cHdrX, (a, b) => (a, b)))
-                cartHdr.Controls.Add(new Label { Text = t, Font = new Font("Segoe UI", 7.5F, FontStyle.Bold), ForeColor = TextMid, BackColor = PanelAlt, AutoSize = true, Location = new Point(x, 6) });
-            cartCard.Controls.Add(cartHdr);
-
-            lblCartEmpty = new Label
+            tbQty.KeyPress += (s, e) => { if (!char.IsControl(e.KeyChar) && !char.IsDigit(e.KeyChar)) e.Handled = true; };
+            tbQty.TextChanged += (s, e) =>
             {
-                Text = "No items added yet. Set a Return Qty above and click Add.",
+                int.TryParse(tbQty.Text.Trim(), out int q);
+                c.ReturnQty = Math.Max(0, Math.Min(q, c.PurchasedQty));
+            };
+
+            var btnAdd = new Button
+            {
+                Text = c.Added ? "✓ Added" : "Add",
+                Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
+                ForeColor = c.Added ? BadgeGreenT : Color.White,
+                BackColor = c.Added ? BadgeGreen : AccBlue,
+                FlatStyle = FlatStyle.Flat,
+                Size = new Size(84, 28),
+                Location = new Point(rowW - 96, (ROW_H - 28) / 2),
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                Cursor = Cursors.Hand,
+                Enabled = !c.Added
+            };
+            btnAdd.FlatAppearance.BorderSize = 0;
+            btnAdd.Click += (s, e) => AddCandidateLineToReturn(c);
+
+            row.Controls.AddRange(new Control[] { tbQty, btnAdd });
+            return row;
+        }
+
+        private void AddCandidateLineToReturn(CandidateLine c)
+        {
+            if (c.ReturnQty <= 0)
+            { ShowStatus("Enter a Return Qty greater than zero before adding.", false); return; }
+
+            _returnLines.Add(new ReturnLineItem
+            {
+                SourceKey = c.SourceKey,
+                SourceInvoiceNo = c.InvoiceNo,
+                Name = c.Name,
+                UnitPrice = c.UnitPrice,
+                DiscountPct = c.DiscountPct,
+                TaxPct = c.TaxPct,
+                UOM = c.UOM,
+                Barcode = c.Barcode,
+                ReturnQty = c.ReturnQty,
+                Reason = "Defective"
+            });
+            c.Added = true;
+
+            RebuildCandidateRows();
+            RebuildLineRows();
+            RecalcTotal();
+
+            _cardReturnDetails.Visible = true;
+            _cardItems.Visible = true;
+            _cardSummary.Visible = true;
+            btnProcessReturn.Enabled = _returnLines.Count > 0;
+            RelayoutCards();
+
+            ShowStatus($"{c.Name} added to return ({c.ReturnQty} {c.UOM}).", true);
+        }
+
+        private void RemoveReturnLine(ReturnLineItem line)
+        {
+            _returnLines.Remove(line);
+
+            // If its source invoice is still being browsed, flip its candidate back to "not added".
+            if (_activeInvoiceNo == line.SourceInvoiceNo)
+            {
+                var cand = _candidateLines.FirstOrDefault(c => c.SourceKey == line.SourceKey);
+                if (cand != null) { cand.Added = false; cand.ReturnQty = 0; }
+                RebuildCandidateRows();
+            }
+
+            RebuildLineRows();
+            RecalcTotal();
+
+            bool anyLeft = _returnLines.Count > 0;
+            _cardReturnDetails.Visible = anyLeft;
+            _cardItems.Visible = anyLeft;
+            _cardSummary.Visible = anyLeft;
+            btnProcessReturn.Enabled = anyLeft;
+            RelayoutCards();
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        //  CARD 4 — RETURN DETAILS  (header-level RMA Number + Return Reason)
+        // ══════════════════════════════════════════════════════════════════
+        private Panel _cardReturnDetails;
+        private void BuildReturnDetailsCard()
+        {
+            _cardReturnDetails = MakeCard();
+            _cardReturnDetails.Visible = false;
+
+            AddCardLabel(_cardReturnDetails, "Return Details", 0, new Font("Segoe UI", 10F, FontStyle.Bold), TextDark);
+
+            var lblReasonCap = new Label
+            {
+                Text = "Return Reason *",
                 Font = new Font("Segoe UI", 8.5F),
                 ForeColor = TextLight,
-                BackColor = PanelWhite,
+                BackColor = Color.Transparent,
                 AutoSize = true,
-                Location = new Point(0, 60)
+                Location = new Point(0, 34)
             };
-            cartCard.Controls.Add(lblCartEmpty);
-
-            panelCartRows = new Panel { BackColor = PanelWhite, AutoSize = true, Location = new Point(0, 54), Width = 1 };
-            cartCard.Controls.Add(panelCartRows);
-            pnlReturnBuilderView.Controls.Add(cartCard);
-
-            // Card: return details
-            var detailsCard = MakeDetailCard(new Point(24, 0), 440);
-            _detailsCard = detailsCard;
-            AddCardHeading(detailsCard, "RETURN DETAILS", TextLight, 8F);
-
-            var lblReason = MkFieldLabel("Return Reason", 26);
-            cmbReturnReason = MkCombo(ReturnReasonOptions, 44);
-            cmbReturnReason.SelectedIndexChanged += (s, e) => _returnReason = cmbReturnReason.SelectedItem?.ToString() ?? "";
-
-            var lblRma = MkFieldLabel("RMA Number", 84);
-            txtRma = new TextBox
+            cmbReturnReason = new ComboBox
             {
                 Font = new Font("Segoe UI", 9.5F),
-                ForeColor = TextDark,
-                BackColor = InputBg,
-                BorderStyle = BorderStyle.FixedSingle,
-                Size = new Size(220, 28),
-                Location = new Point(0, 102)
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Size = new Size(260, 28),
+                Location = new Point(0, 54)
             };
-            txtRma.TextChanged += (s, e) => _rmaNumber = txtRma.Text.Trim();
+            cmbReturnReason.Items.AddRange(ReturnReasonOptions);
+            cmbReturnReason.SelectedIndexChanged += (s, e) =>
+                _returnReasonCode = cmbReturnReason.SelectedItem?.ToString() ?? "";
 
-            var lblDisp = MkFieldLabel("Disposition", 140);
-            cmbDisposition = MkCombo(DispositionOptions, 158);
-            cmbDisposition.SelectedIndexChanged += (s, e) => _dispositionCode = cmbDisposition.SelectedItem?.ToString() ?? "";
-
-            // Refund Method — only Cash is offered.
-            var lblMethod = MkFieldLabel("Refund Method", 198);
-            btnMethodCash = new Button
+            var lblRmaCap = new Label
             {
-                Text = "Cash",
-                Font = new Font("Segoe UI", 9F, FontStyle.Bold),
-                ForeColor = Color.White,
-                BackColor = AccGreen,
-                FlatStyle = FlatStyle.Flat,
-                Size = new Size(90, 32),
-                Location = new Point(0, 216),
-                Cursor = Cursors.Hand,
-                Enabled = false // only option — shown as the fixed selected method
+                Text = "RMA Number (optional)",
+                Font = new Font("Segoe UI", 8.5F),
+                ForeColor = TextLight,
+                BackColor = Color.Transparent,
+                AutoSize = true,
+                Location = new Point(284, 34)
             };
-            btnMethodCash.FlatAppearance.BorderSize = 0;
-            btnMethodCash.Region = MakeRoundedRegion(btnMethodCash.Size, 6);
-
-            var div2 = new Panel { BackColor = BorderColor, Size = new Size(220, 1), Location = new Point(0, 262) };
-            var lblSub = MkSumLbl("Subtotal", 274); _lblSummarySubtotal = MkSumVal("", 274);
-            var lblTax = MkSumLbl("Tax Refund", 296); _lblSummaryTax = MkSumVal("", 296);
-            var div3 = new Panel { BackColor = BorderColor, Size = new Size(220, 1), Location = new Point(0, 320) };
-            var lblTot = new Label { Text = "Total Refund", Font = new Font("Segoe UI", 10F, FontStyle.Bold), ForeColor = TextDark, BackColor = PanelWhite, AutoSize = true, Location = new Point(0, 330) };
-            _lblSummaryTotal = new Label { Text = "", Font = new Font("Segoe UI", 15F, FontStyle.Bold), ForeColor = AccGreen, BackColor = PanelWhite, AutoSize = true, Location = new Point(0, 352) };
-
-            detailsCard.Controls.AddRange(new Control[]
+            txtRMA = new TextBox
             {
-                lblReason, cmbReturnReason, lblRma, txtRma, lblDisp, cmbDisposition,
-                lblMethod, btnMethodCash, div2, lblSub, _lblSummarySubtotal, lblTax, _lblSummaryTax,
-                div3, lblTot, _lblSummaryTotal
-            });
-            detailsCard.Tag = 400;
-            pnlReturnBuilderView.Controls.Add(detailsCard);
+                Font = new Font("Segoe UI", 9.5F),
+                Size = new Size(200, 28),
+                Location = new Point(284, 54)
+            };
+            txtRMA.TextChanged += (s, e) => _rmaNumber = txtRMA.Text.Trim();
 
-            void RestackBuilder(object s, EventArgs e)
-            {
-                int bodyW = Math.Max(760, pnlReturnBuilderView.Width);
-                int cardW = Math.Max(600, bodyW - 48);
-
-                int y = 76;
-                linesCard.Location = new Point(24, y);
-                linesCard.Width = cardW;
-                y = linesCard.Bottom + 16;
-                cartCard.Location = new Point(24, y);
-                cartCard.Width = cardW;
-                y = cartCard.Bottom + 16;
-                detailsCard.Location = new Point(24, y);
-                // Extra bottom padding so the last card never sits flush against
-                // (or under) the sticky footer — the footer lives outside this
-                // scrollable view, so this is just breathing room at the end of
-                // the scrollable content.
-                pnlReturnBuilderView.Height = detailsCard.Bottom + 32;
-            }
-            linesCard.Resize += RestackBuilder;
-            cartCard.Resize += RestackBuilder;
-            detailsCard.Resize += RestackBuilder;
-            pnlReturnBuilderView.SizeChanged += RestackBuilder;
-            RestackBuilder(null, EventArgs.Empty);
+            _cardReturnDetails.Controls.AddRange(new Control[] { lblReasonCap, cmbReturnReason, lblRmaCap, txtRMA });
+            panelContent.Controls.Add(_cardReturnDetails);
         }
 
-        private Label MkFieldLabel(string text, int y) => new Label
+        // ══════════════════════════════════════════════════════════════════
+        //  CARD 5 — ITEMS IN THIS RETURN
+        //  Columns: Invoice | Item Name | UOM | Price | Disc% | Tax% | Qty | Reason | Refund | ✕
+        // ══════════════════════════════════════════════════════════════════
+        private Panel _cardItems;
+        private void BuildItemsCard()
         {
-            Text = text,
-            Font = new Font("Segoe UI", 8F, FontStyle.Bold),
-            ForeColor = TextMid,
-            BackColor = PanelWhite,
-            AutoSize = true,
-            Location = new Point(0, y)
-        };
+            _cardItems = MakeCard();
+            _cardItems.Visible = false;
 
-        private ComboBox MkCombo(string[] items, int y)
-        {
-            var cmb = new ComboBox
+            AddCardLabel(_cardItems, "Items to Return", 0, new Font("Segoe UI", 10F, FontStyle.Bold), TextDark);
+
+            var hdr = new Panel
             {
-                Font = new Font("Segoe UI", 9.5F),
-                ForeColor = TextDark,
-                BackColor = InputBg,
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                FlatStyle = FlatStyle.Flat,
-                Size = new Size(220, 28),
-                Location = new Point(0, y)
+                BackColor = SummaryBg,
+                Size = new Size(1, 32),
+                Location = new Point(0, 28),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
-            cmb.Items.AddRange(items);
-            return cmb;
+            hdr.Paint += (s, e) => { hdr.Width = _cardItems.Width - CARD_PAD * 2; e.Graphics.Clear(SummaryBg); };
+
+            string[] hdrs = { "Invoice", "Item Name", "Unit", "Price", "Disc%", "Tax%", "Ret Qty", "Reason" };
+            int[] hdrX = { 8, 96, 260, 298, 356, 396, 436, 508 };
+            foreach (var (t, x) in hdrs.Zip(hdrX, (a, b) => (a, b)))
+                hdr.Controls.Add(new Label
+                {
+                    Text = t,
+                    Font = new Font("Segoe UI", 7.5F, FontStyle.Bold),
+                    ForeColor = TextLight,
+                    BackColor = Color.Transparent,
+                    AutoSize = true,
+                    Location = new Point(x, 8)
+                });
+
+            _cardItems.Controls.Add(hdr);
+
+            panelLines = new Panel { BackColor = Color.Transparent, AutoSize = true, Location = new Point(0, 62), Width = 1 };
+            _cardItems.Controls.Add(panelLines);
+            _cardItems.AutoSize = true;
+            panelContent.Controls.Add(_cardItems);
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        //  CARD 6 — RETURN SUMMARY
+        // ══════════════════════════════════════════════════════════════════
+        private Panel _cardSummary;
+        private Label _lblSummarySubtotal, _lblSummaryTax, _lblSummaryTotal;
+
+        private void BuildSummaryCard()
+        {
+            _cardSummary = MakeCard();
+            _cardSummary.Visible = false;
+
+            AddCardLabel(_cardSummary, "Return Summary", 0, new Font("Segoe UI", 10F, FontStyle.Bold), TextDark);
+
+            var lblSubCap = MkSumLbl("Subtotal (after discount)", 32);
+            _lblSummarySubtotal = MkSumVal("", 32);
+            var lblTaxCap = MkSumLbl("Tax Refund", 56);
+            _lblSummaryTax = MkSumVal("", 56);
+            var div = new Panel { BackColor = CardBorder, Size = new Size(300, 1), Location = new Point(0, 82) };
+
+            var lblTotalCap = new Label
+            {
+                Text = "Total Return Amount",
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+                ForeColor = TextDark,
+                BackColor = Color.Transparent,
+                AutoSize = true,
+                Location = new Point(0, 90)
+            };
+            _lblSummaryTotal = new Label
+            {
+                Text = "",
+                Font = new Font("Segoe UI", 15F, FontStyle.Bold),
+                ForeColor = TextLight,
+                BackColor = Color.Transparent,
+                AutoSize = true,
+                Location = new Point(0, 112)
+            };
+
+            btnMethodCash = MakeSummaryMethodBtn("Cash", AccGreen, new Point(0, 148));
+            btnMethodCash.Click += (s, e) => SetRefundMethod("cash");
+
+            _cardSummary.Controls.AddRange(new Control[]
+            {
+                lblSubCap, _lblSummarySubtotal, lblTaxCap, _lblSummaryTax, div,
+                lblTotalCap, _lblSummaryTotal, btnMethodCash
+            });
+
+            panelRefundMethod = _cardSummary;
+            panelContent.Controls.Add(_cardSummary);
+            SetRefundMethod("cash");
         }
 
         private Label MkSumLbl(string text, int y) => new Label
@@ -1377,7 +981,7 @@ namespace POSAPP.Sales
             Text = text,
             Font = new Font("Segoe UI", 9F),
             ForeColor = TextMid,
-            BackColor = PanelWhite,
+            BackColor = Color.Transparent,
             AutoSize = true,
             Location = new Point(0, y)
         };
@@ -1386,343 +990,296 @@ namespace POSAPP.Sales
             Text = text,
             Font = new Font("Segoe UI", 9F, FontStyle.Bold),
             ForeColor = TextDark,
-            BackColor = PanelWhite,
+            BackColor = Color.Transparent,
             AutoSize = true,
-            Location = new Point(160, y)
+            Location = new Point(260, y)
         };
 
-        // ══════════════════════════════════════════════════════════════════
-        //  ENTER / EXIT RETURN BUILDER
-        // ══════════════════════════════════════════════════════════════════
-        private async void ShowReturnBuilder()
+        private Button MakeSummaryMethodBtn(string text, Color fg, Point loc)
         {
-            if (_selectedOrder == null) return;
-
-            _currentInvoiceNo = _selectedOrder.Invoice.Header.InvoiceNo;
-            lblReturnBuilderInvoice.Text = $"Return Items — {_currentInvoiceNo}";
-
-            var returnedQtys = await SalesReturnRepository.GetReturnedQtysAsync(_currentInvoiceNo);
-
-            _currentInvoiceLines = new List<InvoiceLineCandidate>();
-            foreach (var r in _selectedOrder.Invoice.Lines)
+            var b = new Button
             {
-                int already = 0;
-                string key = !string.IsNullOrWhiteSpace(r.Barcode) ? r.Barcode.Trim() : r.ItemName?.Trim();
-                if (!string.IsNullOrWhiteSpace(key) && returnedQtys.TryGetValue(key, out int rq))
-                    already = rq;
+                Text = text,
+                Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+                ForeColor = fg == AccGreen ? Color.White : fg,
+                BackColor = fg == AccGreen ? AccGreen : Color.FromArgb(243, 244, 246),
+                FlatStyle = FlatStyle.Flat,
+                Size = new Size(80, 36),
+                Location = loc,
+                Cursor = Cursors.Hand
+            };
+            b.FlatAppearance.BorderSize = 0;
+            b.Region = MakeRoundedRegion(b.Size, 8);
+            return b;
+        }
 
-                var candidate = new InvoiceLineCandidate
-                {
-                    ItemName = r.ItemName,
-                    UnitPrice = r.UnitPrice,
-                    DiscountPct = r.DiscountPct,
-                    TaxPct = r.TaxPct,
-                    UOM = string.IsNullOrWhiteSpace(r.UOM) ? "EA" : r.UOM,
-                    Barcode = r.Barcode,
-                    PurchasedQty = r.Qty,
-                    AlreadyReturnedQty = already,
-                    ReturnQty = 0
-                };
-                candidate.Added = _cartLines.Any(cl =>
-                    string.Equals(cl.SourceInvoiceNo, _currentInvoiceNo, StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(cl.Name, candidate.ItemName, StringComparison.OrdinalIgnoreCase));
+        private new void SetRefundMethod(string method)
+        {
+            _refundMethod = method;
+            Color offBg = Color.FromArgb(42, 46, 58);
+            btnMethodCash.BackColor = method == "cash" ? AccGreen : offBg;
+            btnMethodCash.ForeColor = method == "cash" ? Color.White : TextMid;
+        }
 
-                if (candidate.MaxReturnable > 0 || candidate.Added)
-                    _currentInvoiceLines.Add(candidate);
+        // ══════════════════════════════════════════════════════════════════
+        //  RELAYOUT
+        // ══════════════════════════════════════════════════════════════════
+        private void RelayoutCards()
+        {
+            if (panelContent == null) return;
+            panelContent.Width = Math.Max(1, _scrollOuter.ClientSize.Width);
+            int cardW = panelContent.Width - CARD_MARGIN * 2;
+            int y = CARD_MARGIN;
+
+            foreach (Panel card in new[] { _cardCustomer, _cardInvoiceList, _cardCandidateLines, _cardReturnDetails, _cardItems, _cardSummary })
+            {
+                if (card == null) continue;
+                card.Width = cardW;
+                card.Location = new Point(CARD_MARGIN, y);
+                if (card == _cardItems && panelLines != null) panelLines.Width = cardW - CARD_PAD * 2;
+                if (card == _cardCandidateLines && panelCandidateLines != null) panelCandidateLines.Width = cardW - CARD_PAD * 2;
+                if (card.Visible) y += card.Height + CARD_MARGIN;
             }
-
-            RebuildInvoiceLineRows();
-            RebuildCartRows();
-            RecalcTotal();
-
-            pnlOrderDetailView.Visible = false;
-            pnlReturnBuilderView.Visible = true;
-            pnlDetailBody.AutoScrollPosition = Point.Empty;
-            pnlBuilderFooter.Visible = true;   // sticky footer appears only in builder mode
-            btnCreateMenu.Enabled = false;
-            pnlReturnBuilderView.Invalidate(true);
-
-            ShowBuilderStatusToast(_currentInvoiceLines.Count > 0
-                ? $"Set a Return Qty and click Add for each item you want to return from {_currentInvoiceNo}."
-                : $"Invoice {_currentInvoiceNo} has no returnable items left.", _currentInvoiceLines.Count > 0);
-        }
-
-        private void BackToOrderDetail()
-        {
-            pnlReturnBuilderView.Visible = false;
-            pnlOrderDetailView.Visible = true;
-            pnlDetailBody.AutoScrollPosition = Point.Empty;
-            pnlBuilderFooter.Visible = false;
-            btnCreateMenu.Enabled = true;
-            pnlOrderDetailView.Invalidate(true);
+            panelContent.Height = y;
         }
 
         // ══════════════════════════════════════════════════════════════════
-        //  INVOICE LINE ROWS
+        //  REBUILD LINE ROWS  (the return's line list — can span invoices)
         // ══════════════════════════════════════════════════════════════════
-        private void RebuildInvoiceLineRows()
+        private void RebuildLineRows()
         {
-            foreach (Control c in panelInvoiceLineRows.Controls) c.Dispose();
-            panelInvoiceLineRows.Controls.Clear();
+            foreach (Control c in panelLines.Controls) c.Dispose();
+            panelLines.Controls.Clear();
 
             int y = 0;
-            for (int i = 0; i < _currentInvoiceLines.Count; i++)
+            for (int i = 0; i < _returnLines.Count; i++)
             {
-                var row = BuildInvoiceLineRow(_currentInvoiceLines[i], y, i % 2 == 0);
-                panelInvoiceLineRows.Controls.Add(row);
-                y += 46;
+                panelLines.Controls.Add(BuildLineRow(_returnLines[i], y, i % 2 == 0));
+                y += 52;
             }
-            panelInvoiceLineRows.Height = Math.Max(1, y);
+            panelLines.Height = Math.Max(1, y);
+            RelayoutCards();
         }
 
-        private Panel BuildInvoiceLineRow(InvoiceLineCandidate line, int yOffset, bool alt)
+        private Panel BuildLineRow(ReturnLineItem line, int yOffset, bool alt)
         {
-            const int ROW_H = 42;
-            int rowW = Math.Max(1, panelInvoiceLineRows.Width);
-            Color rowBg = alt ? PanelWhite : PanelAlt;
+            const int ROW_H = 48;
+            int rowW = Math.Max(1, panelLines.Width);
 
             var row = new Panel
             {
-                BackColor = rowBg,
+                BackColor = alt ? CardWhite : RowAlt,
                 Size = new Size(rowW, ROW_H),
                 Location = new Point(0, yOffset),
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
             row.Paint += (s, e) =>
             {
-                e.Graphics.Clear(rowBg);
-                using var pen = new Pen(BorderColor, 1f);
+                using var pen = new Pen(Color.FromArgb(50, 54, 66), 1f);
                 e.Graphics.DrawLine(pen, 0, ROW_H - 1, ((Panel)s).Width, ROW_H - 1);
             };
 
-            row.Controls.Add(new Label { Text = line.ItemName, Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), ForeColor = TextDark, BackColor = rowBg, Size = new Size(210, ROW_H), Location = new Point(0, 0), TextAlign = ContentAlignment.MiddleLeft });
-            row.Controls.Add(new Label { Text = $"{line.MaxReturnable} / {line.PurchasedQty}", Font = new Font("Segoe UI", 8.5F), ForeColor = TextMid, BackColor = rowBg, Size = new Size(64, ROW_H), Location = new Point(220, 0), TextAlign = ContentAlignment.MiddleCenter });
-            row.Controls.Add(new Label { Text = line.UOM, Font = new Font("Segoe UI", 8.5F), ForeColor = AccGreen, BackColor = rowBg, Size = new Size(36, ROW_H), Location = new Point(290, 0), TextAlign = ContentAlignment.MiddleCenter });
-            row.Controls.Add(new Label { Text = Fmt(line.UnitPrice), Font = new Font("Segoe UI", 8.5F), ForeColor = TextMid, BackColor = rowBg, Size = new Size(76, ROW_H), Location = new Point(330, 0), TextAlign = ContentAlignment.MiddleLeft });
+            row.Controls.Add(new Label
+            {
+                Text = line.SourceInvoiceNo,
+                Font = new Font("Segoe UI", 8F, FontStyle.Bold),
+                ForeColor = AccPurple,
+                BackColor = Color.Transparent,
+                Size = new Size(84, ROW_H),
+                Location = new Point(8, 0),
+                TextAlign = ContentAlignment.MiddleLeft
+            });
 
+            row.Controls.Add(new Label
+            {
+                Text = line.Name,
+                Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
+                ForeColor = TextDark,
+                BackColor = Color.Transparent,
+                Size = new Size(160, ROW_H),
+                Location = new Point(96, 0),
+                TextAlign = ContentAlignment.MiddleLeft
+            });
+
+            row.Controls.Add(new Label
+            {
+                Text = line.UOM,
+                Font = new Font("Segoe UI", 8.5F),
+                ForeColor = AccCyan,
+                BackColor = Color.Transparent,
+                Size = new Size(36, ROW_H),
+                Location = new Point(260, 0),
+                TextAlign = ContentAlignment.MiddleCenter
+            });
+
+            row.Controls.Add(new Label
+            {
+                Text = Fmt(line.UnitPrice),
+                Font = new Font("Segoe UI", 8.5F),
+                ForeColor = TextMid,
+                BackColor = Color.Transparent,
+                Size = new Size(56, ROW_H),
+                Location = new Point(298, 0),
+                TextAlign = ContentAlignment.MiddleLeft
+            });
+
+            row.Controls.Add(new Label
+            {
+                Text = line.DiscountPct > 0 ? $"{line.DiscountPct:F1}%" : "—",
+                Font = new Font("Segoe UI", 8.5F),
+                ForeColor = AccOrange,
+                BackColor = Color.Transparent,
+                Size = new Size(38, ROW_H),
+                Location = new Point(356, 0),
+                TextAlign = ContentAlignment.MiddleCenter
+            });
+
+            row.Controls.Add(new Label
+            {
+                Text = line.TaxPct > 0 ? $"{line.TaxPct:F1}%" : "—",
+                Font = new Font("Segoe UI", 8.5F),
+                ForeColor = AccBlue,
+                BackColor = Color.Transparent,
+                Size = new Size(38, ROW_H),
+                Location = new Point(396, 0),
+                TextAlign = ContentAlignment.MiddleCenter
+            });
+
+            var spWrapper = new Panel
+            {
+                BackColor = Color.FromArgb(42, 46, 58),
+                Size = new Size(64, 30),
+                Location = new Point(436, (ROW_H - 30) / 2)
+            };
+            spWrapper.Region = MakeRoundedRegion(spWrapper.Size, 6);
             var tbQty = new TextBox
             {
                 Text = line.ReturnQty.ToString(),
                 Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
                 ForeColor = TextDark,
-                BackColor = InputBg,
-                BorderStyle = BorderStyle.FixedSingle,
+                BackColor = Color.FromArgb(42, 46, 58),
+                BorderStyle = BorderStyle.None,
                 TextAlign = HorizontalAlignment.Center,
-                Size = new Size(60, 26),
-                Location = new Point(410, (ROW_H - 26) / 2),
-                MaxLength = 4,
-                Enabled = !line.Added
+                Size = new Size(56, 24),
+                Location = new Point(4, 3),
+                MaxLength = 4
             };
             tbQty.KeyPress += (s, e) => { if (!char.IsControl(e.KeyChar) && !char.IsDigit(e.KeyChar)) e.Handled = true; };
-            tbQty.Leave += (s, e) =>
+            void ApplyQtyInput()
             {
-                if (!int.TryParse(tbQty.Text.Trim(), out int qty)) qty = 0;
-                qty = Math.Max(0, Math.Min(qty, line.MaxReturnable));
-                line.ReturnQty = qty;
-                tbQty.Text = qty.ToString();
-            };
-
-            var btnAction = new Button
-            {
-                Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
-                FlatStyle = FlatStyle.Flat,
-                Size = new Size(110, 28),
-                Location = new Point(480, (ROW_H - 28) / 2),
-                Cursor = Cursors.Hand
-            };
-            btnAction.FlatAppearance.BorderSize = 0;
-            btnAction.Region = MakeRoundedRegion(btnAction.Size, 6);
-
-            void RefreshActionButton()
-            {
-                if (line.Added)
-                {
-                    btnAction.Text = "✓ Added";
-                    btnAction.BackColor = AccGreenLight;
-                    btnAction.ForeColor = AccGreen;
-                }
-                else
-                {
-                    btnAction.Text = "Add to Return";
-                    btnAction.BackColor = AccGreen;
-                    btnAction.ForeColor = Color.White;
-                }
-            }
-            RefreshActionButton();
-
-            btnAction.Click += (s, e) =>
-            {
-                if (!int.TryParse(tbQty.Text.Trim(), out int qty)) qty = 0;
-                qty = Math.Max(0, Math.Min(qty, line.MaxReturnable));
-
-                if (!line.Added)
-                {
-                    if (qty <= 0)
-                    { ShowBuilderStatusToast("Enter a Return Qty greater than zero before adding.", false); return; }
-
-                    line.ReturnQty = qty;
-                    _cartLines.Add(new ReturnCartLine
-                    {
-                        SourceInvoiceNo = _currentInvoiceNo,
-                        Name = line.ItemName,
-                        UnitPrice = line.UnitPrice,
-                        DiscountPct = line.DiscountPct,
-                        TaxPct = line.TaxPct,
-                        UOM = line.UOM,
-                        Barcode = line.Barcode,
-                        ReturnQty = qty
-                    });
-                    line.Added = true;
-                    tbQty.Enabled = false;
-                    ShowBuilderStatusToast($"{line.ItemName} added to the return.", true);
-                }
-                else
-                {
-                    _cartLines.RemoveAll(cl =>
-                        string.Equals(cl.SourceInvoiceNo, _currentInvoiceNo, StringComparison.OrdinalIgnoreCase) &&
-                        string.Equals(cl.Name, line.ItemName, StringComparison.OrdinalIgnoreCase));
-                    line.Added = false;
-                    tbQty.Enabled = true;
-                    ShowBuilderStatusToast($"{line.ItemName} removed from the return.", true);
-                }
-
-                RefreshActionButton();
-                RebuildCartRows();
+                if (int.TryParse(tbQty.Text.Trim(), out int entered) && entered > 0)
+                { line.ReturnQty = entered; tbQty.Text = entered.ToString(); }
+                else { RemoveReturnLine(line); return; }
                 RecalcTotal();
-            };
-
-            row.Controls.AddRange(new Control[] { tbQty, btnAction });
-            return row;
-        }
-
-        // ══════════════════════════════════════════════════════════════════
-        //  CART ROWS
-        // ══════════════════════════════════════════════════════════════════
-        private void RebuildCartRows()
-        {
-            foreach (Control c in panelCartRows.Controls) c.Dispose();
-            panelCartRows.Controls.Clear();
-            lblCartEmpty.Visible = _cartLines.Count == 0;
-
-            int y = 0;
-            for (int i = 0; i < _cartLines.Count; i++)
-            {
-                var row = BuildCartRow(_cartLines[i], y, i % 2 == 0);
-                panelCartRows.Controls.Add(row);
-                y += 42;
+                UpdateRowRefund(row, line);
             }
-            panelCartRows.Height = Math.Max(1, y);
-        }
+            tbQty.Leave += (s, e) => ApplyQtyInput();
+            tbQty.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { ApplyQtyInput(); e.Handled = true; e.SuppressKeyPress = true; } };
+            spWrapper.Controls.Add(tbQty);
 
-        private Panel BuildCartRow(ReturnCartLine line, int yOffset, bool alt)
-        {
-            const int ROW_H = 38;
-            int rowW = Math.Max(1, panelCartRows.Width);
-            Color rowBg = alt ? PanelWhite : PanelAlt;
-
-            var row = new Panel
+            var cmbReason = new ComboBox
             {
-                BackColor = rowBg,
-                Size = new Size(rowW, ROW_H),
-                Location = new Point(0, yOffset),
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+                Font = new Font("Segoe UI", 8.5F),
+                ForeColor = TextMid,
+                BackColor = Color.FromArgb(42, 46, 58),
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                FlatStyle = FlatStyle.Flat,
+                Size = new Size(92, 28),
+                Location = new Point(508, (ROW_H - 28) / 2)
             };
-            row.Paint += (s, e) =>
-            {
-                e.Graphics.Clear(rowBg);
-                using var pen = new Pen(BorderColor, 1f);
-                e.Graphics.DrawLine(pen, 0, ROW_H - 1, ((Panel)s).Width, ROW_H - 1);
-            };
+            cmbReason.Items.AddRange(LineReasonOptions);
+            cmbReason.SelectedItem = line.Reason ?? "Defective";
+            cmbReason.SelectedIndexChanged += (s, e) => { if (cmbReason.SelectedItem != null) line.Reason = cmbReason.SelectedItem.ToString(); };
 
-            row.Controls.Add(new Label { Text = line.SourceInvoiceNo, Font = new Font("Segoe UI", 8F), ForeColor = TextLight, BackColor = rowBg, Size = new Size(114, ROW_H), Location = new Point(0, 0), TextAlign = ContentAlignment.MiddleLeft });
-            row.Controls.Add(new Label { Text = line.Name, Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), ForeColor = TextDark, BackColor = rowBg, Size = new Size(210, ROW_H), Location = new Point(120, 0), TextAlign = ContentAlignment.MiddleLeft });
-            row.Controls.Add(new Label { Text = line.ReturnQty.ToString(), Font = new Font("Segoe UI", 8.5F), ForeColor = TextMid, BackColor = rowBg, Size = new Size(36, ROW_H), Location = new Point(340, 0), TextAlign = ContentAlignment.MiddleCenter });
-            row.Controls.Add(new Label { Text = line.UOM, Font = new Font("Segoe UI", 8.5F), ForeColor = AccGreen, BackColor = rowBg, Size = new Size(40, ROW_H), Location = new Point(380, 0), TextAlign = ContentAlignment.MiddleCenter });
-            row.Controls.Add(new Label { Text = Fmt(line.LineRefund), Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), ForeColor = AccGreen, BackColor = rowBg, Size = new Size(100, ROW_H), Location = new Point(428, 0), TextAlign = ContentAlignment.MiddleLeft });
+            var lblRef = new Label
+            {
+                Name = "lblRefund",
+                Text = Fmt(line.LineRefund),
+                Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
+                ForeColor = TextGreen,
+                BackColor = Color.Transparent,
+                Size = new Size(88, ROW_H),
+                Location = new Point(rowW - 132, 0),
+                TextAlign = ContentAlignment.MiddleRight,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right
+            };
 
             var btnRemove = new Button
             {
-                Text = "Remove",
-                Font = new Font("Segoe UI", 8F, FontStyle.Bold),
+                Text = "✕",
+                Font = new Font("Segoe UI", 9F, FontStyle.Bold),
                 ForeColor = AccRed,
-                BackColor = AccRedLight,
+                BackColor = Color.Transparent,
                 FlatStyle = FlatStyle.Flat,
-                Size = new Size(80, 26),
-                Location = new Point(rowW - 90, (ROW_H - 26) / 2),
+                Size = new Size(28, 28),
+                Location = new Point(rowW - 36, (ROW_H - 28) / 2),
                 Anchor = AnchorStyles.Top | AnchorStyles.Right,
                 Cursor = Cursors.Hand
             };
             btnRemove.FlatAppearance.BorderSize = 0;
-            btnRemove.Region = MakeRoundedRegion(btnRemove.Size, 6);
-            btnRemove.Click += (s, e) =>
-            {
-                _cartLines.Remove(line);
-                if (string.Equals(line.SourceInvoiceNo, _currentInvoiceNo, StringComparison.OrdinalIgnoreCase))
-                {
-                    var candidate = _currentInvoiceLines.FirstOrDefault(c => string.Equals(c.ItemName, line.Name, StringComparison.OrdinalIgnoreCase));
-                    if (candidate != null) candidate.Added = false;
-                    RebuildInvoiceLineRows();
-                }
-                RebuildCartRows();
-                RecalcTotal();
-                ShowBuilderStatusToast($"{line.Name} removed from the return.", true);
-            };
+            btnRemove.Click += (s, e) => RemoveReturnLine(line);
 
-            row.Controls.Add(btnRemove);
+            row.Controls.AddRange(new Control[] { spWrapper, cmbReason, lblRef, btnRemove });
             return row;
         }
 
-        // ══════════════════════════════════════════════════════════════════
-        //  TOTALS
-        // ══════════════════════════════════════════════════════════════════
-        private new void SetRefundMethod(string method)
+        private void UpdateRowRefund(Panel row, ReturnLineItem line)
         {
-            _refundMethod = method;
-            btnMethodCash.BackColor = AccGreen;
-            btnMethodCash.ForeColor = Color.White;
+            var lbl = row.Controls.OfType<Label>().FirstOrDefault(l => l.Name == "lblRefund");
+            if (lbl != null) lbl.Text = Fmt(line.LineRefund);
         }
 
+        // ══════════════════════════════════════════════════════════════════
+        //  RECALC TOTAL
+        // ══════════════════════════════════════════════════════════════════
         private void RecalcTotal()
         {
-            decimal subtotal = _cartLines.Sum(l => l.LineSubtotal);
-            decimal tax = _cartLines.Sum(l => l.LineTax);
+            decimal subtotal = _returnLines.Sum(l => l.LineSubtotal);
+            decimal tax = _returnLines.Sum(l => l.LineTax);
             decimal total = subtotal + tax;
 
-            _lblSummarySubtotal.Text = subtotal > 0 ? Fmt(subtotal) : "—";
-            _lblSummaryTax.Text = tax > 0 ? Fmt(tax) : "—";
-            _lblSummaryTotal.Text = total > 0 ? Fmt(total) : "—";
-            lblRefundTotalFooter.Text = total > 0 ? $"Refund: {Fmt(total)}" : "";
+            if (_lblSummarySubtotal != null) { _lblSummarySubtotal.Text = subtotal > 0 ? Fmt(subtotal) : "—"; _lblSummarySubtotal.ForeColor = subtotal > 0 ? TextDark : TextLight; }
+            if (_lblSummaryTax != null) { _lblSummaryTax.Text = tax > 0 ? Fmt(tax) : "—"; _lblSummaryTax.ForeColor = tax > 0 ? AccBlue : TextLight; }
+            if (_lblSummaryTotal != null) { _lblSummaryTotal.Text = total > 0 ? Fmt(total) : "—"; _lblSummaryTotal.ForeColor = total > 0 ? TextDark : TextLight; }
 
-            btnProcessReturn.Enabled = _cartLines.Count > 0;
+            lblRefundTotal.Text = total > 0 ? $"Refund:  {Fmt(total)}" : "";
+            lblRefundTotal.ForeColor = total > 0 ? TextGreen : TextMid;
         }
 
         // ══════════════════════════════════════════════════════════════════
-        //  PROCESS RETURN
+        //  PROCESS RETURN — validates header fields, then shows the
+        //  Disposition step (mirrors React's showDispositionModal flow)
+        //  before saving.
         // ══════════════════════════════════════════════════════════════════
         private void BtnProcessReturn_Click(object sender, EventArgs e)
         {
-            if (!_cartLines.Any())
-            { ShowBuilderStatusToast("Add at least one item to the return before processing.", false); return; }
-            if (string.IsNullOrWhiteSpace(_returnReason))
-            { ShowBuilderStatusToast("Please select a Return Reason.", false); return; }
-            if (string.IsNullOrWhiteSpace(_dispositionCode))
-            { ShowBuilderStatusToast("Please select a Disposition for the returned items.", false); return; }
+            if (!_returnLines.Any())
+            { ShowStatus("Add at least one item to the return.", false); return; }
 
-            decimal subtotal = _cartLines.Sum(l => l.LineSubtotal);
-            decimal taxRefund = _cartLines.Sum(l => l.LineTax);
+            if (string.IsNullOrWhiteSpace(_returnReasonCode))
+            { ShowStatus("Please select a Return Reason before processing.", false); return; }
+
+            using (var dispForm = new DispositionPickerForm())
+            {
+                if (dispForm.ShowDialog(this) != DialogResult.OK) return;
+                _dispositionCode = dispForm.SelectedDisposition;
+            }
+
+            decimal subtotal = _returnLines.Sum(l => l.LineSubtotal);
+            decimal taxRefund = _returnLines.Sum(l => l.LineTax);
             decimal totalRefund = subtotal + taxRefund;
 
             if (totalRefund <= 0)
-            { ShowBuilderStatusToast("Return amount is zero.", false); return; }
+            { ShowStatus("Return amount is zero.", false); return; }
 
-            string sourceInvoices = string.Join(", ", _cartLines.Select(l => l.SourceInvoiceNo).Distinct());
+            string invoiceList = string.Join(", ", _returnLines.Select(l => l.SourceInvoiceNo).Distinct());
 
             var confirm = MessageBox.Show(
-                $"Process return for {_cartLines.Count} item(s) across invoice(s) {sourceInvoices}?\n\n" +
+                $"Process return for {_returnLines.Count} item(s) across invoice(s) {invoiceList}?\n\n" +
                 $"Customer   :  {_selectedCustomerName}\n" +
-                $"Reason     :  {_returnReason}\n" +
-                $"RMA Number :  {(_rmaNumber ?? "-")}\n" +
-                $"Disposition:  {_dispositionCode}\n" +
+                $"RMA Number :  {(string.IsNullOrWhiteSpace(_rmaNumber) ? "—" : _rmaNumber)}\n" +
+                $"Reason     :  {_returnReasonCode}\n" +
+                $"Disposition:  {_dispositionCode}\n\n" +
                 $"Subtotal   :  {Fmt(subtotal)}\n" +
                 $"Tax Refund :  {Fmt(taxRefund)}\n" +
                 $"Total      :  {Fmt(totalRefund)}\n" +
@@ -1737,14 +1294,18 @@ namespace POSAPP.Sales
                 var returnRecord = new SalesReturnRecord
                 {
                     ReturnInvoiceNo = returnInvNo,
-                    OriginalInvoiceNo = sourceInvoices,
+                    OriginalInvoiceNo = invoiceList,      // now potentially multi-invoice
                     CustomerName = _selectedCustomerName,
                     RefundMethod = _refundMethod,
                     RefundTotal = totalRefund,
                     ReturnDate = DateTime.Now,
                     CompanyId = _companyId,
                     CashierName = "ADMIN",
-                    Lines = _cartLines.Select(l => new SalesReturnLine
+                    // ── new header fields — add these properties to SalesReturnRecord ──
+                    RmaNumber = _rmaNumber,
+                    ReturnReason = _returnReasonCode,
+                    DispositionCode = _dispositionCode,
+                    Lines = _returnLines.Select(l => new SalesReturnLine
                     {
                         ItemName = l.Name,
                         UnitPrice = l.UnitPrice,
@@ -1754,6 +1315,7 @@ namespace POSAPP.Sales
                         ReturnQty = l.ReturnQty,
                         RefundAmt = l.LineRefund,
                         Barcode = l.Barcode,
+                        // ── new per-line field — add this property to SalesReturnLine ──
                         OriginalInvoiceNo = l.SourceInvoiceNo
                     }).ToList()
                 };
@@ -1762,51 +1324,130 @@ namespace POSAPP.Sales
                 SalesReturnRepository.SaveReturn(returnRecord);
 
                 DashboardEventBus.Notify();
+
+                // Disposition = "Scrap" means the goods are written off rather
+                // than restocked — skip any stock-return hook here. If/when you
+                // add an inventory-return call for other dispositions, gate it
+                // with this same check.
+                if (!string.Equals(_dispositionCode, "Scrap", StringComparison.OrdinalIgnoreCase))
+                {
+                    // TODO: call your inventory "return to stock" routine here,
+                    // e.g. InventoryRepository.ReturnStock(returnRecord.Lines, _companyId);
+                }
+
                 PrintReturnReceipt(returnRecord);
 
-                ShowBuilderStatusToast($"✓ Return {returnInvNo} processed — refund {Fmt(totalRefund)} via {RefundMethodLabel()}.", true);
+                ShowStatus($"✓ Return {returnInvNo} processed — refund {Fmt(totalRefund)} via {RefundMethodLabel()}.", true);
 
                 MessageBox.Show(
                     $"Return processed successfully!\n\nReturn Invoice:  {returnInvNo}\n" +
-                    $"Source Invoice(s): {sourceInvoices}\n" +
                     $"Subtotal :       {Fmt(subtotal)}\n" +
                     $"Tax Refund :     {Fmt(taxRefund)}\n" +
                     $"Total Refund :   {Fmt(totalRefund)}\n" +
                     $"Method :         {RefundMethodLabel()}\n\nReturn receipt printed.",
                     "Return Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
-                _cartLines.Clear();
-                _returnReason = ""; _rmaNumber = ""; _dispositionCode = "";
-                cmbReturnReason.SelectedIndex = -1; txtRma.Text = ""; cmbDisposition.SelectedIndex = -1;
-                BackToOrderDetail();
-                _ = LoadAllOrdersAsync();
+                ResetForm();
             }
             catch (Exception ex)
             {
-                ShowBuilderStatusToast("Return error: " + ex.Message, false);
+                ShowStatus("Return error: " + ex.Message, false);
                 MessageBox.Show("Failed to save return:\n" + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
         // ══════════════════════════════════════════════════════════════════
-        //  PRINT RETURN RECEIPT — A4 layout (unchanged from v1; print output
-        //  intentionally stays on a white physical page regardless of the
-        //  on-screen theme)
+        //  DISPOSITION PICKER — small modal, mirrors React's showDispositionModal
+        // ══════════════════════════════════════════════════════════════════
+        private class DispositionPickerForm : Form
+        {
+            public string SelectedDisposition { get; private set; } = "";
+            private ComboBox _cmb;
+
+            public DispositionPickerForm()
+            {
+                Text = "Select Disposition";
+                FormBorderStyle = FormBorderStyle.FixedDialog;
+                StartPosition = FormStartPosition.CenterParent;
+                MaximizeBox = false; MinimizeBox = false;
+                ClientSize = new Size(360, 190);
+                BackColor = CardWhite;
+
+                var lblTitle = new Label
+                {
+                    Text = "Select Disposition",
+                    Font = new Font("Segoe UI", 12F, FontStyle.Bold),
+                    ForeColor = TextDark,
+                    AutoSize = true,
+                    Location = new Point(24, 20)
+                };
+                var lblSub = new Label
+                {
+                    Text = "Choose how the returned items should be handled",
+                    Font = new Font("Segoe UI", 8.5F),
+                    ForeColor = TextMid,
+                    AutoSize = true,
+                    Location = new Point(24, 48)
+                };
+
+                _cmb = new ComboBox
+                {
+                    Font = new Font("Segoe UI", 10F),
+                    DropDownStyle = ComboBoxStyle.DropDownList,
+                    Size = new Size(312, 30),
+                    Location = new Point(24, 76)
+                };
+                _cmb.Items.AddRange(DispositionOptions);
+
+                var btnCancel = new Button
+                {
+                    Text = "Cancel",
+                    Size = new Size(150, 38),
+                    Location = new Point(24, 132),
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = Color.FromArgb(229, 231, 235),
+                    ForeColor = TextMid
+                };
+                btnCancel.FlatAppearance.BorderSize = 0;
+                btnCancel.Click += (s, e) => { DialogResult = DialogResult.Cancel; Close(); };
+
+                var btnOk = new Button
+                {
+                    Text = "Confirm",
+                    Size = new Size(150, 38),
+                    Location = new Point(186, 132),
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = AccBlue,
+                    ForeColor = Color.White,
+                    Font = new Font("Segoe UI", 9F, FontStyle.Bold)
+                };
+                btnOk.FlatAppearance.BorderSize = 0;
+                btnOk.Click += (s, e) =>
+                {
+                    if (_cmb.SelectedItem == null)
+                    { MessageBox.Show("Please select a Disposition Code.", "Required", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
+                    SelectedDisposition = _cmb.SelectedItem.ToString();
+                    DialogResult = DialogResult.OK;
+                    Close();
+                };
+
+                Controls.AddRange(new Control[] { lblTitle, lblSub, _cmb, btnCancel, btnOk });
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        //  PRINT RETURN RECEIPT — A4 layout
         // ══════════════════════════════════════════════════════════════════
         private void PrintReturnReceipt(SalesReturnRecord r)
         {
             var data = BuildReturnReceiptData(r);
+
             var pd = new PrintDocument();
             pd.DefaultPageSettings.PaperSize = new PaperSize("A4", 827, 1169);
             pd.DefaultPageSettings.Margins = new Margins(0, 0, 0, 0);
             pd.PrintPage += (ps, pe) => DrawA4ReturnReceipt(pe.Graphics, data, pe.PageBounds, pe.Graphics.DpiX);
 
-            var preview = new PrintPreviewDialog
-            {
-                Document = pd,
-                WindowState = FormWindowState.Maximized,
-                StartPosition = FormStartPosition.CenterParent
-            };
+            var preview = new PrintPreviewDialog { Document = pd, WindowState = FormWindowState.Maximized, StartPosition = FormStartPosition.CenterParent };
             preview.ShowDialog(this);
         }
 
@@ -1818,14 +1459,14 @@ namespace POSAPP.Sales
             return new ReturnReceiptData
             {
                 ReturnInvoiceNo = r.ReturnInvoiceNo,
-                OriginalInvoiceNos = string.Join(", ", r.Lines.Select(l => l.OriginalInvoiceNo).Distinct()),
+                OriginalInvoiceNos = r.OriginalInvoiceNo,
                 CustomerName = r.CustomerName,
                 ReturnDate = r.ReturnDate,
                 CashierName = r.CashierName,
                 RefundMethod = RefundMethodLabel(r.RefundMethod),
-                ReturnReason = _returnReason,
-                RmaNumber = _rmaNumber,
-                DispositionCode = _dispositionCode,
+                RMANumber = r.RmaNumber,
+                ReturnReasonCode = r.ReturnReason,
+                DispositionCode = r.DispositionCode,
                 RefundSubtotal = sub,
                 RefundTax = tax,
                 RefundTotal = r.RefundTotal,
@@ -1838,7 +1479,7 @@ namespace POSAPP.Sales
                 SalesOfficeInfo = _salesOfficeInfo,
                 Lines = r.Lines.Select(l => new ReturnReceiptLine
                 {
-                    OriginalInvoiceNo = l.OriginalInvoiceNo,
+                    InvoiceNo = l.OriginalInvoiceNo,
                     ItemName = l.ItemName,
                     ReturnQty = l.ReturnQty,
                     UOM = string.IsNullOrWhiteSpace(l.UOM) ? "EA" : l.UOM,
@@ -1852,6 +1493,10 @@ namespace POSAPP.Sales
             };
         }
 
+        // ══════════════════════════════════════════════════════════════════
+        //  DrawA4ReturnReceipt — GDI+ A4 layout
+        //  Columns: # | Invoice | Description | Ret Qty | Unit | Unit Price | Disc% | Tax% | Tax Amt | Refund Amt
+        // ══════════════════════════════════════════════════════════════════
         private static void DrawA4ReturnReceipt(Graphics g, ReturnReceiptData d, Rectangle bounds, float dpi)
         {
             float sc = bounds.Width / 794f;
@@ -1886,13 +1531,15 @@ namespace POSAPP.Sales
             void Txt(string s, Font f, Brush br, float x, float yt, float w, float h, StringFormat sf = null)
                 => g.DrawString(s, f, br, new RectangleF(x, yt, w, h), sf ?? lFmt);
 
+            // [1] HEADER — unchanged from original (logo / company / office boxes)
             float logoW = fullW * 0.34f;
             float compX = left + logoW + 5f * sc;
             float compW = fullW * 0.33f;
             float officeX = compX + compW + 3f * sc;
             float officeW = left + fullW - officeX;
 
-            string companyName = d.CompanyName ?? "ABC";
+            string companyName = d.CompanyName ?? "ShriPOS";
+            string companyAddress = d.CompanyAddress ?? "";
             string companyPhone = d.CompanyPhone ?? "";
             string companyVat = d.CompanyVat ?? "";
             string companyWebsite = d.CompanyWebsite ?? "";
@@ -1914,8 +1561,12 @@ namespace POSAPP.Sales
             offH += 6f * sc;
 
             float cInnerW = compW - 14f * sc;
-            float compH_content = 8f * sc;
-            compH_content += fBold.GetHeight(g) + 5f * sc;
+            float compH_content = 8f * sc + fBold.GetHeight(g) + 5f * sc;
+            if (!string.IsNullOrWhiteSpace(companyAddress))
+            {
+                var sz = g.MeasureString(companyAddress, fSmall, new SizeF(cInnerW, 999f), wrapFmt);
+                compH_content += sz.Height + 4f * sc;
+            }
             if (!string.IsNullOrWhiteSpace(companyPhone)) compH_content += fSmall.GetHeight(g) + 4f * sc;
             if (!string.IsNullOrWhiteSpace(companyVat)) compH_content += fSmall.GetHeight(g) + 4f * sc;
             if (!string.IsNullOrWhiteSpace(companyWebsite)) compH_content += fSmall.GetHeight(g) + 4f * sc;
@@ -1940,26 +1591,27 @@ namespace POSAPP.Sales
                     float maxW = logoW - pad * 2f;
                     float maxH = headerH - pad * 2f;
                     float ratio = Math.Min(maxW / logo.Width, maxH / logo.Height);
-                    float lw = logo.Width * ratio;
-                    float lh = logo.Height * ratio;
+                    float lw = logo.Width * ratio, lh = logo.Height * ratio;
                     g.DrawImage(logo, left + pad, y + (headerH - lh) / 2f, lw, lh);
                 }
                 catch { Txt(companyName, fBigBold, bkBlack, left, y, logoW, headerH, cFmt); }
             }
-            else
-                Txt(companyName, fBigBold, bkBlack, left, y, logoW, headerH, cFmt);
+            else Txt(companyName, fBigBold, bkBlack, left, y, logoW, headerH, cFmt);
 
             g.DrawRectangle(penThk, compX, y, compW, headerH);
             {
                 float cx = compX + 7f * sc, cw = cInnerW, cy = y + 8f * sc;
                 g.DrawString(companyName, fBold, bkBlack, new RectangleF(cx, cy, cw, fBold.GetHeight(g) + 2f), lFmt);
                 cy += fBold.GetHeight(g) + 5f * sc;
-                if (!string.IsNullOrWhiteSpace(companyPhone))
-                { g.DrawString("Phone: " + companyPhone, fSmall, bkBlack, new RectangleF(cx, cy, cw, fSmall.GetHeight(g) + 2f), lFmt); cy += fSmall.GetHeight(g) + 4f * sc; }
-                if (!string.IsNullOrWhiteSpace(companyVat))
-                { g.DrawString("Vat : " + companyVat, fSmall, bkBlack, new RectangleF(cx, cy, cw, fSmall.GetHeight(g) + 2f), lFmt); cy += fSmall.GetHeight(g) + 4f * sc; }
-                if (!string.IsNullOrWhiteSpace(companyWebsite))
-                    g.DrawString("Website : " + companyWebsite, fSmall, bkBlack, new RectangleF(cx, cy, cw, fSmall.GetHeight(g) + 2f), lFmt);
+                if (!string.IsNullOrWhiteSpace(companyAddress))
+                {
+                    var sz = g.MeasureString(companyAddress, fSmall, new SizeF(cw, 999f), wrapFmt);
+                    g.DrawString(companyAddress, fSmall, bkBlack, new RectangleF(cx, cy, cw, sz.Height + 2f), wrapFmt);
+                    cy += sz.Height + 4f * sc;
+                }
+                if (!string.IsNullOrWhiteSpace(companyPhone)) { g.DrawString("Phone: " + companyPhone, fSmall, bkBlack, new RectangleF(cx, cy, cw, fSmall.GetHeight(g) + 2f), lFmt); cy += fSmall.GetHeight(g) + 4f * sc; }
+                if (!string.IsNullOrWhiteSpace(companyVat)) { g.DrawString("Vat : " + companyVat, fSmall, bkBlack, new RectangleF(cx, cy, cw, fSmall.GetHeight(g) + 2f), lFmt); cy += fSmall.GetHeight(g) + 4f * sc; }
+                if (!string.IsNullOrWhiteSpace(companyWebsite)) g.DrawString("Website : " + companyWebsite, fSmall, bkBlack, new RectangleF(cx, cy, cw, fSmall.GetHeight(g) + 2f), lFmt);
             }
 
             g.DrawRectangle(penThk, officeX, y, officeW, headerH);
@@ -1982,12 +1634,14 @@ namespace POSAPP.Sales
             }
             y += headerH + 10f * sc;
 
-            float bannerW = fullW * 0.48f;
+            // [2] "SALES RETURN" banner + meta box — now includes RMA / Reason / Disposition
+            float bannerW = fullW * 0.52f;
             float metaX = left + bannerW + 6f * sc;
             float metaW = left + fullW - metaX;
-            float metaLineH = fSmall.GetHeight(g) + 4f * sc;
-            float metaBoxH = 7f * metaLineH + 14f * sc;
-            float returnHdrH = Math.Max(96f * sc, metaBoxH);
+
+            float metaLineH = fSmall.GetHeight(g) + 5f * sc;
+            float metaBoxH = 8f * metaLineH + 14f * sc;
+            float returnHdrH = Math.Max(80f * sc, metaBoxH);
 
             g.FillRectangle(bkReturnBanner, left, y, bannerW, returnHdrH);
             g.DrawRectangle(penBlk, left, y, bannerW, returnHdrH);
@@ -1996,7 +1650,7 @@ namespace POSAPP.Sales
 
             g.DrawRectangle(penThk, metaX, y, metaW, returnHdrH);
             {
-                float cx = metaX + 7f * sc, cw = metaW - 14f * sc, cy = y + 6f * sc, lw = cw * 0.42f;
+                float cx = metaX + 7f * sc, cw = metaW - 14f * sc, cy = y + 7f * sc, lw = cw * 0.46f;
                 void MetaRow(string lbl, string val)
                 {
                     g.DrawString(lbl, fBold, bkBlack, new RectangleF(cx, cy, lw, metaLineH), lFmt);
@@ -2004,15 +1658,17 @@ namespace POSAPP.Sales
                     cy += metaLineH;
                 }
                 MetaRow("Return Invoice :", d.ReturnInvoiceNo ?? "");
-                MetaRow("Source Invoice(s):", d.OriginalInvoiceNos ?? "");
+                MetaRow("Original Inv(s):", d.OriginalInvoiceNos ?? "");
                 MetaRow("Date / Time    :", d.ReturnDate.ToString("dd/MM/yyyy HH:mm"));
                 MetaRow("Cashier        :", d.CashierName ?? "");
-                MetaRow("Reason         :", d.ReturnReason ?? "");
-                MetaRow("RMA / Disposition:", $"{(string.IsNullOrWhiteSpace(d.RmaNumber) ? "-" : d.RmaNumber)} / {d.DispositionCode ?? "-"}");
                 MetaRow("Refund Method  :", d.RefundMethod ?? "Cash");
+                MetaRow("RMA Number     :", string.IsNullOrWhiteSpace(d.RMANumber) ? "—" : d.RMANumber);
+                MetaRow("Return Reason  :", d.ReturnReasonCode ?? "");
+                MetaRow("Disposition    :", d.DispositionCode ?? "");
             }
             y += returnHdrH + 10f * sc;
 
+            // [3] Customer row
             float custW = fullW * 0.50f;
             float custInnerW = custW - 14f * sc;
             float custBoxH = Math.Max(60f * sc, 8f * sc + fBold.GetHeight(g) + 5f * sc + fNorm.GetHeight(g) + 4f * sc + 6f * sc);
@@ -2022,12 +1678,12 @@ namespace POSAPP.Sales
                 float cx = left + 7f * sc, cy = y + 8f * sc;
                 g.DrawString("Customer", fBold, bkBlack, new RectangleF(cx, cy, custInnerW, fBold.GetHeight(g) + 2f), lFmt);
                 cy += fBold.GetHeight(g) + 5f * sc;
-                g.DrawString(string.IsNullOrWhiteSpace(d.CustomerName) ? "Walk-in" : d.CustomerName,
-                    fNorm, bkBlack, new RectangleF(cx, cy, custInnerW, fNorm.GetHeight(g) + 2f), lFmt);
+                g.DrawString(string.IsNullOrWhiteSpace(d.CustomerName) ? "Walk-in" : d.CustomerName, fNorm, bkBlack, new RectangleF(cx, cy, custInnerW, fNorm.GetHeight(g) + 2f), lFmt);
             }
             y += custBoxH + 10f * sc;
 
-            float[] iPcts = { 0.04f, 0.11f, 0.22f, 0.06f, 0.06f, 0.11f, 0.06f, 0.06f, 0.11f, 0.17f };
+            // [4] Items table — includes an Invoice column since a return can span several
+            float[] iPcts = { 0.04f, 0.13f, 0.19f, 0.06f, 0.06f, 0.11f, 0.06f, 0.06f, 0.11f, 0.18f };
             string[] iHdrs = { "#", "Invoice", "Description", "Ret Qty", "Unit", "Unit Price", "Disc%", "Tax%", "Tax Amt", "Refund Amt" };
             bool[] iRight = { false, false, false, true, false, true, true, true, true, true };
             float[] iWidths = iPcts.Select(p => fullW * p).ToArray();
@@ -2061,7 +1717,7 @@ namespace POSAPP.Sales
 
                 string[] iVals =
                 {
-                    rowNum++.ToString(), li.OriginalInvoiceNo ?? "", li.ItemName ?? "", li.ReturnQty.ToString(), uom,
+                    rowNum++.ToString(), li.InvoiceNo ?? "", li.ItemName ?? "", li.ReturnQty.ToString(), uom,
                     $"{sym} {li.UnitPrice:F2}", disc, taxP, $"{sym} {li.TaxAmt:F2}", $"{sym} {li.RefundAmt:F2}"
                 };
 
@@ -2070,9 +1726,8 @@ namespace POSAPP.Sales
                 {
                     if (i > 0) g.DrawLine(penBlk, ix, y, ix, y + rowH);
                     var sf = i == 2 ? lTopFmt
-                           : iRight[i]
-                             ? new StringFormat { Alignment = StringAlignment.Far, LineAlignment = StringAlignment.Center }
-                             : new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Center };
+                           : iRight[i] ? new StringFormat { Alignment = StringAlignment.Far, LineAlignment = StringAlignment.Center }
+                                       : new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Center };
                     g.DrawString(iVals[i], fSmall, bkBlack, new RectangleF(ix + 3f * sc, y + 2f * sc, iWidths[i] - 6f * sc, rowH - 4f * sc), sf);
                     ix += iWidths[i];
                 }
@@ -2080,6 +1735,7 @@ namespace POSAPP.Sales
             }
             g.DrawLine(penThk, left, y, left + fullW, y);
 
+            // [5] Footer — totals + signatures + T&C (unchanged layout)
             float sigW = fullW * 0.58f;
             float totW = fullW * 0.38f;
             float totX = left + fullW - totW;
@@ -2147,21 +1803,159 @@ namespace POSAPP.Sales
         }
 
         // ══════════════════════════════════════════════════════════════════
+        //  RESET
+        // ══════════════════════════════════════════════════════════════════
+        private void ResetForm()
+        {
+            _returnLines.Clear();
+            _candidateLines.Clear();
+            _activeInvoiceNo = null;
+            _selectedCustomerId = null;
+            _selectedCustomerName = "";
+            _rmaNumber = ""; _returnReasonCode = ""; _dispositionCode = "";
+
+            cmbCustomer.SelectedIndex = -1;
+            cmbCustomer.Text = "";
+            if (txtRMA != null) txtRMA.Text = "";
+            if (cmbReturnReason != null) cmbReturnReason.SelectedIndex = -1;
+
+            if (_lblSummarySubtotal != null) _lblSummarySubtotal.Text = "";
+            if (_lblSummaryTax != null) _lblSummaryTax.Text = "";
+            if (_lblSummaryTotal != null) _lblSummaryTotal.Text = "";
+
+            _cardInvoiceList.Visible = false;
+            _cardCandidateLines.Visible = false;
+            _cardReturnDetails.Visible = false;
+            _cardItems.Visible = false;
+            _cardSummary.Visible = false;
+
+            RebuildLineRows();
+            RecalcTotal();
+            btnProcessReturn.Enabled = false;
+            ShowStatus("Select a customer to begin a return.", false);
+            RelayoutCards();
+            cmbCustomer.Focus();
+        }
+
+        // ══════════════════════════════════════════════════════════════════
         //  HELPERS
         // ══════════════════════════════════════════════════════════════════
         private string Fmt(decimal v) => $"{_currencySymbol} {v:N2}";
 
         private string RefundMethodLabel(string m = null)
         {
-            // Only Cash is supported as a refund method.
-            return "Cash";
+            switch (m ?? _refundMethod)
+            {
+                case "cash": return "Cash";
+                case "upi": return "UPI / Digital";
+                case "bank": return "Bank Transfer";
+                default: return "Cash";
+            }
         }
 
-        private void ShowBuilderStatusToast(string msg, bool ok)
+        private void ShowStatus(string msg, bool ok)
         {
-            if (lblBuilderStatus == null) return;
-            lblBuilderStatus.Text = msg;
-            lblBuilderStatus.ForeColor = ok ? AccGreen : AccRed;
+            lblStatus.Text = msg;
+            lblStatus.ForeColor = ok ? TextGreen : AccRed;
+        }
+
+        private void LayoutFooterButtons()
+        {
+            if (panelFooter == null) return;
+            int bh = 40;
+            int btnY = Math.Max(4, (panelFooter.Height - bh) / 2);
+            int right = panelFooter.Width - 16;
+
+            if (btnProcessReturn != null) { btnProcessReturn.Location = new Point(right - btnProcessReturn.Width, btnY); right -= btnProcessReturn.Width + 10; }
+            if (btnCancel != null) btnCancel.Location = new Point(right - btnCancel.Width, btnY);
+            if (lblRefundTotal != null)
+                lblRefundTotal.Location = new Point(panelFooter.Width - lblRefundTotal.Width - btnProcessReturn.Width - btnCancel.Width - 36, 0);
+        }
+
+        private Panel MakeCard()
+        {
+            var p = new Panel { BackColor = CardWhite, Padding = new Padding(CARD_PAD), Height = 80 };
+            p.Paint += (s, e) =>
+            {
+                var g = e.Graphics;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                using var pen = new Pen(CardBorder, 1f);
+                using var path = RoundedPath(new Rectangle(0, 0, p.Width - 1, p.Height - 1), CARD_RADIUS);
+                g.DrawPath(pen, path);
+            };
+            p.ControlAdded += (s, e) => FitCard(p);
+            p.Resize += (s, e) => FitCard(p);
+            return p;
+        }
+
+        private void FitCard(Panel card)
+        {
+            if (card.Controls.Count == 0) return;
+            int maxBottom = card.Controls.OfType<Control>().Max(c => c.Bottom + CARD_PAD);
+            if (card.Height != maxBottom + CARD_PAD) card.Height = maxBottom + CARD_PAD;
+        }
+
+        private static void AddCardLabel(Panel card, string text, int y, Font f, Color fc)
+        {
+            card.Controls.Add(new Label { Text = text, Font = f, ForeColor = fc, BackColor = Color.Transparent, AutoSize = true, Location = new Point(0, y) });
+        }
+
+        private Button MakeFooterBtn(string text, Color bg, Color fg, Size sz)
+        {
+            var b = new Button
+            {
+                Text = text,
+                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
+                ForeColor = fg,
+                BackColor = bg,
+                FlatStyle = FlatStyle.Flat,
+                Size = sz,
+                Cursor = Cursors.Hand
+            };
+            b.FlatAppearance.BorderSize = 0;
+            b.Region = MakeRoundedRegion(sz, 8);
+            if (bg == AccGreen)
+            {
+                b.MouseEnter += (s, e) => b.BackColor = Color.FromArgb(21, 128, 61);
+                b.MouseLeave += (s, e) => b.BackColor = AccGreen;
+            }
+            return b;
+        }
+
+        private Button MakeTitleBtn(string text, Point loc)
+        {
+            var b = new Button
+            {
+                Text = text,
+                Font = new Font("Segoe UI", 10F),
+                ForeColor = TextMid,
+                BackColor = Color.Transparent,
+                FlatStyle = FlatStyle.Flat,
+                Size = new Size(46, HEADER_H),
+                Location = loc,
+                Cursor = Cursors.Hand
+            };
+            b.FlatAppearance.BorderSize = 0;
+            return b;
+        }
+
+        private static void DrawRoundedBorder(Control ctrl, Color color, int radius)
+        {
+            ctrl.Invalidate();
+            ctrl.Paint += (s, e) =>
+            {
+                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                using var pen = new Pen(color, 1.5f);
+                using var path = new GraphicsPath();
+                var rect = new Rectangle(1, 1, ctrl.Width - 3, ctrl.Height - 3);
+                int d = radius * 2;
+                path.AddArc(rect.X, rect.Y, d, d, 180, 90);
+                path.AddArc(rect.Right - d, rect.Y, d, d, 270, 90);
+                path.AddArc(rect.Right - d, rect.Bottom - d, d, d, 0, 90);
+                path.AddArc(rect.X, rect.Bottom - d, d, d, 90, 90);
+                path.CloseFigure();
+                e.Graphics.DrawPath(pen, path);
+            };
         }
 
         private Region MakeRoundedRegion(Size size, int r) => new Region(RoundedPath(new Rectangle(0, 0, size.Width, size.Height), r));
@@ -2176,23 +1970,6 @@ namespace POSAPP.Sales
             path.AddArc(rect.X, rect.Bottom - d, d, d, 90, 90);
             path.CloseFigure();
             return path;
-        }
-
-        private Button MakeTitleBtn(string text, Point loc)
-        {
-            var b = new Button
-            {
-                Text = text,
-                Font = new Font("Segoe UI", 10F),
-                ForeColor = TextMid,
-                BackColor = PanelWhite,
-                FlatStyle = FlatStyle.Flat,
-                Size = new Size(46, HEADER_H),
-                Location = loc,
-                Cursor = Cursors.Hand
-            };
-            b.FlatAppearance.BorderSize = 0;
-            return b;
         }
 
         protected override void OnPaint(PaintEventArgs e)

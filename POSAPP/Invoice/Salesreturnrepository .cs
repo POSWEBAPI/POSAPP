@@ -1,11 +1,14 @@
-﻿using System;
+﻿using POSAPP;
+using System;
 using System.Collections.Generic;
 using System.Data.SqlClient;
 using System.Data.SQLite;
 using System.Globalization;
 using System.IO;
+using System.Linq;
+using System.Text.Json;
 using System.Text.Json.Serialization;
-using POSAPP;
+using System.Threading.Tasks;
 
 namespace POSAPP.Invoice
 {
@@ -268,14 +271,28 @@ namespace POSAPP.Invoice
             var list = new List<POSAPP.CustomerFullDto>();
             try
             {
-                var result = await ApiClient.GetAsync<POSAPP.CustomerListDto>("/api/customers");
-                list = (result?.Data ?? new List<POSAPP.CustomerFullDto>())
-                    .Where(c => c.Status)
-                    .OrderBy(c => c.CustomerName, StringComparer.OrdinalIgnoreCase)
-                    .ToList();
-                // NOTE: companyId is currently unused — CustomerFullDto has no CompanyID
-                // property, so there's nothing to filter by per-company here. If your
-                // customers ARE scoped per company, see the two options below.
+                var root = ApiClient.UnwrapArray(await ApiClient.GetJsonAsync("/api/customers"));
+
+                foreach (var c in root.EnumerateArray())
+                {
+                    int id = ApiClient.Int(c, "customerID", "CustomerID", "customerId", "id");
+                    string name = ApiClient.Str(c, "customerName", "CustomerName", "name");
+                    bool status = c.TryGetProperty("status", out var st) || c.TryGetProperty("Status", out st)
+                        ? (st.ValueKind == JsonValueKind.True || (st.ValueKind == JsonValueKind.String && st.GetString() == "true"))
+                        : true; // default active if field missing
+
+                    if (string.IsNullOrWhiteSpace(name)) continue;
+                    if (!status) continue;
+
+                    list.Add(new POSAPP.CustomerFullDto
+                    {
+                        CustomerID = id,
+                        CustomerName = name,
+                        Status = status
+                    });
+                }
+
+                list.Sort((a, b) => string.Compare(a.CustomerName, b.CustomerName, StringComparison.OrdinalIgnoreCase));
             }
             catch (Exception ex)
             {
