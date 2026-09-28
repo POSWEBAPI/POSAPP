@@ -20,6 +20,17 @@ namespace POSAPP
 
         private const int PIN_LENGTH = 5;
 
+        // ── JSON options ─────────────────────────────────────────────────────
+        // FIX: System.Text.Json is case-sensitive by default. The API returns
+        // camelCase keys ("companyId", "storeId", "roleId", ...) while our C#
+        // properties use PascalCase ("CompanyID", "StoreID", "RoleID"). Without
+        // this option, those fields silently fail to bind and stay at 0/null —
+        // which is why CompanyID was coming back empty after a successful login.
+        private static readonly JsonSerializerOptions JsonOpts = new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        };
+
         // ── Drag ──────────────────────────────────────────────────────────────
         private bool _drag;
         private Point _dragCursor, _dragForm;
@@ -58,7 +69,7 @@ namespace POSAPP
 
             _ = Task.Run(() => { try { new SyncService().SyncAll(); } catch { } });
 
-           // _ = CheckForUpdateAsync();
+            // _ = CheckForUpdateAsync();
         }
         private async Task CheckForUpdateAsync()
         {
@@ -89,7 +100,7 @@ namespace POSAPP
         }
         private void LoadLogo()
         {
-            string[] names = { "logo1.png", "shripos.png", "ShriPOS.png", "logo1.jpg", "logo1.jpeg" };
+            string[] names = { "logo.png", "shripos.png", "ShriPOS.png", "logo.jpg", "logo.jpeg" };
             foreach (string n in names)
             {
                 string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, n);
@@ -317,7 +328,11 @@ namespace POSAPP
             {
                 var api = new ApiService();
                 string json = await api.LoginAsync(_pin);
-                var result = JsonSerializer.Deserialize<LoginResponse>(json);
+
+                // FIX: pass JsonOpts so camelCase JSON ("companyId", "storeId",
+                // "roleId") correctly binds to the PascalCase UserInfo properties.
+                var result = JsonSerializer.Deserialize<LoginResponse>(json, JsonOpts);
+
                 if (result != null && result.IsSuccess)
                 {
                     ShowStatus("Logged in successfully!", StatusType.Success);
@@ -402,13 +417,20 @@ namespace POSAPP
         //    // return "https://localhost:7022";
         //}
 
-        private void ApplyLoginResult(UserInfo user, string token)
+        private async void ApplyLoginResult(UserInfo user, string token)
         {
             CurrentUser.Token = token;
             CurrentUser.UserInfo = user;
             CurrentUser.CompanyID = user.CompanyID;
             CurrentUser.StoreID = user.StoreID;
             CurrentUser.RoleID = user.RoleID;
+
+            // NEW — token == null means we logged in offline, so go straight
+            // to the SQLite mirror instead of attempting an API call.
+            await POSAPP.Security.RightsManager.LoadAsync(
+                user.RoleID,
+                isOnline: token != null);
+
             new Dashboard().Show();
             this.Hide();
         }

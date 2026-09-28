@@ -6,6 +6,7 @@ using POSAPP.Payment;
 using POSAPP.Printer;
 using POSAPP.Reports;
 using POSAPP.Sales;
+using POSAPP.Security;
 using POSAPP.Shift;
 using System;
 using System.Collections.Generic;
@@ -122,6 +123,51 @@ namespace POSAPP
             Color.FromArgb(220, 168,   8),
         };
 
+        private static class Menu
+        {
+            public const string Dashboard = "/pos-dashboard";
+            public const string Sales = "/sales";
+            public const string SalesReturn = "/sales-return";
+            public const string Inventory = "/pos-inventory";
+            public const string PurchaseOrder = "/pos-purchase-order";
+            public const string PendingInvoice = "/pending-invoice";
+            public const string FloatEntry = "/float-entry";
+            public const string TenderDecl = "/tender-declaration";
+            public const string CloseShift = "/close-shift";
+            public const string PrinterSetting = "/printer-settings";
+            public const string DayEndReport = "/pos-day-end-report";
+            public const string ReturnReport = "/sales-return-report";
+        }
+
+        private void ApplyMenuRights()
+        {
+            btnNavSales.Visible = RightsManager.CanView(Menu.Sales);
+            btnNavSalesReturn.Visible = RightsManager.CanView(Menu.SalesReturn);
+            btnNavInventory.Visible = RightsManager.CanView(Menu.Inventory);
+            //btnNavPurchaseOrder.Visible = RightsManager.CanView(Menu.PurchaseOrder);
+            btnNavFloat.Visible = RightsManager.CanView(Menu.FloatEntry);
+            btnNavTenderDeclaration.Visible = RightsManager.CanView(Menu.TenderDecl);
+            btnNavCloseShift.Visible = RightsManager.CanView(Menu.CloseShift);
+            btnNavSettings.Visible = RightsManager.CanView(Menu.PrinterSetting);
+            btnNavReports.Visible = RightsManager.CanView(Menu.DayEndReport)
+                                           || RightsManager.CanView(Menu.ReturnReport);
+            //btnNavSales.Visible = true;
+            //btnNavSalesReturn.Visible = true;
+            //btnNavInventory.Visible = true;
+            ////btnNavPurchaseOrder.Visible = RightsManager.CanView(Menu.PurchaseOrder);
+            //btnNavFloat.Visible = true;
+            //btnNavTenderDeclaration.Visible = true;
+            //btnNavCloseShift.Visible = true;
+            //btnNavSettings.Visible = true;
+            //btnNavReports.Visible = true;
+        }
+        private bool Guard(string menuKey)
+        {
+            if (RightsManager.CanView(menuKey)) return true;
+            MessageBox.Show("You do not have permission to access this screen.",
+                "Access Denied", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return false;
+        }
         private System.Windows.Forms.Timer _clockTimer;
 
         // ══════════════════════════════════════════════════════════════════
@@ -155,6 +201,8 @@ namespace POSAPP
             UpdateDateTime();
             btnMaximize_Click(sender, e);
             SetActiveNav(btnNavDashboard);
+            ApplyMenuRights();
+            RepositionNavButtons();
             _clockTimer = new System.Windows.Forms.Timer { Interval = 60_000 };
             _clockTimer.Tick += (s, _) =>
             {
@@ -448,6 +496,7 @@ namespace POSAPP
         // ── Sales ─────────────────────────────────────────────────────────
         private void btnNavSales_Click(object sender, EventArgs e)
         {
+            //if (!Guard(Menu.Sales)) return;
             if (_selectedCompanyId <= 0)
             {
                 MessageBox.Show("Please select a company before opening Sales.",
@@ -467,6 +516,7 @@ namespace POSAPP
         // ── Inventory ─────────────────────────────────────────────────────
         private void btnNavInventory_Click(object sender, EventArgs e)
         {
+            //if (!Guard(Menu.Inventory)) return;
             SetActiveNav((Button)sender);
             ShowPage(new ProductCatalogForm(ApiBaseUrl));
         }
@@ -474,6 +524,7 @@ namespace POSAPP
         // ── Sales Return ──────────────────────────────────────────────────
         private void btnNavSalesReturn_Click(object sender, EventArgs e)
         {
+            //if (!Guard(Menu.SalesReturn)) return;
             if (_selectedCompanyId <= 0)
             {
                 MessageBox.Show("Please select a company before opening Sales Return.",
@@ -497,6 +548,7 @@ namespace POSAPP
         // ── Pending Invoices ──────────────────────────────────────────────
         private void btnPending_Click(object sender, EventArgs e)
         {
+            //if (!Guard(Menu.PendingInvoice)) return;
             if (_selectedCompanyId <= 0)
             {
                 MessageBox.Show("Please select a company first.",
@@ -515,6 +567,7 @@ namespace POSAPP
         // ── Float Entry ───────────────────────────────────────────────────
         private void btnNavFloat_Click(object sender, EventArgs e)
         {
+            //if (!Guard(Menu.FloatEntry)) return;
             SetActiveNav(btnNavFloat);
             ShowPage(new FloatManagerForm(
                 _selectedCompanyId, CurrentUser.UserInfo.UserID,
@@ -524,6 +577,7 @@ namespace POSAPP
         // ── Tender Declaration ────────────────────────────────────────────
         private void btnNavTenderDeclaration_Click(object sender, EventArgs e)
         {
+            //if (!Guard(Menu.TenderDecl)) return;
             SetActiveNav((Button)sender);
             ShowPage(new TenderDeclarationForm(CurrentUser.UserInfo.UserID, _currencySymbol ?? "P"));
         }
@@ -531,6 +585,7 @@ namespace POSAPP
         // ── Close Shift ───────────────────────────────────────────────────
         private void btnNavCloseShift_Click(object sender, EventArgs e)
         {
+            //if (!Guard(Menu.CloseShift)) return;
             SetActiveNav(btnNavCloseShift);
             ShowPage(new CloseShiftForm(
                 CurrentUser.UserInfo.UserID, _selectedCompanyId,
@@ -541,6 +596,7 @@ namespace POSAPP
         // ── Settings ──────────────────────────────────────────────────────
         private void btnSettings_Click(object sender, EventArgs e)
         {
+            //if (!Guard(Menu.PrinterSetting)) return;
             SetActiveNav((Button)sender);
             ShowPage(new PrinterSettingsForm());
         }
@@ -548,12 +604,14 @@ namespace POSAPP
         // ── Reports submenu ───────────────────────────────────────────────
         private void btnSubDayEnd_Click(object sender, EventArgs e)
         {
+            //if (!Guard(Menu.DayEndReport)) return;
             ShowPage(new DayEndReportForm(
                 DateTime.Today, _selectedCompanyId, _companyName, "P"));
         }
 
         private void btnSubReturnReport_Click(object sender, EventArgs e)
         {
+            //if (!Guard(Menu.ReturnReport)) return;
             ShowPage(new SalesReturnReportForm(
                 companyId: _selectedCompanyId,
                 company: _companyName,
@@ -1044,12 +1102,12 @@ namespace POSAPP
             if (stores?.Count > 0) BindStoresToCombo(stores);
         }
 
-        private async Task<List<Store>> TryFetchStoresFromApiAsync(int companyId)
+        private async Task<List<Store>> TryFetchStoresFromApiAsync(int StoreID)
         {
             try
             {
                 var api = new ApiService();
-                string url = $"api/store/get/{CurrentUser.CompanyID}";
+                string url = $"api/store/get/{CurrentUser.StoreID}";
                 var response = await api.GetAsync(url);
                 if (string.IsNullOrEmpty(response)) return null;
                 var result = JsonSerializer.Deserialize<ApiResponse<Store>>(response,
@@ -1610,7 +1668,8 @@ namespace POSAPP
             if (MessageBox.Show("Are you sure you want to logout?", "Logout",
                     MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
             {
-                login.CurrentUser.Clear();   // clear session
+                login.CurrentUser.Clear();
+                RightsManager.Clear();// clear session
 
                 var loginForm = new login();
                 loginForm.Show();

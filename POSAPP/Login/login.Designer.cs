@@ -144,7 +144,7 @@ namespace POSAPP
             };
             lblLogoFallback = new Label
             {
-                Text = "EUROTEX",
+                Text = "SHRIPOS",
                 Font = new Font("Segoe UI", 24F, FontStyle.Bold),
                 ForeColor = Color.FromArgb(30, 27, 75),
                 BackColor = Color.Transparent,

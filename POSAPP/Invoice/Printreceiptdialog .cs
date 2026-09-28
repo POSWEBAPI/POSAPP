@@ -679,46 +679,46 @@ namespace POSAPP.Invoice
             g.DrawLine(penBlk, colComp, y, colComp, y + headerH);
             g.DrawLine(penBlk, colInv, y, colInv, y + headerH);
 
-            // Logo — checks every filename/location this app has historically used
-    //        string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-    //        string[] logoCandidates =
-    //        {
-    //    //Path.Combine(baseDir, "logo.jpg"),
-    //    //Path.Combine(baseDir, "logo.jpeg"),
-    //    //Path.Combine(baseDir, "logo.png"),
-    //    //Path.Combine(baseDir, "flo.jpg"),
-    //    //Path.Combine(baseDir, "flo.png"),
-    //    //Path.Combine(baseDir, "Resources", "logo.jpg"),
-    //    //Path.Combine(baseDir, "Resources", "logo.jpeg"),
-    //    //Path.Combine(baseDir, "Resources", "logo.png"),
-    //    //Path.Combine(baseDir, "Resources", "flo.jpg"),
-    //    //Path.Combine(baseDir, "Resources", "flo.png"),
-    //};
-    //        string logoPath = logoCandidates.FirstOrDefault(File.Exists);
+            //Logo — checks every filename / location this app has historically used
+            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            string[] logoCandidates =
+            {
+        Path.Combine(baseDir, "logo.jpg"),
+        Path.Combine(baseDir, "logo.jpeg"),
+        Path.Combine(baseDir, "logo.png"),
+        Path.Combine(baseDir, "flo.jpg"),
+        Path.Combine(baseDir, "flo.png"),
+        Path.Combine(baseDir, "Resources", "logo.jpg"),
+        Path.Combine(baseDir, "Resources", "logo.jpeg"),
+        Path.Combine(baseDir, "Resources", "logo.png"),
+        Path.Combine(baseDir, "Resources", "flo.jpg"),
+        Path.Combine(baseDir, "Resources", "flo.png"),
+    };
+            string logoPath = logoCandidates.FirstOrDefault(File.Exists);
 
-    //        if (string.IsNullOrEmpty(logoPath))
-    //        {
-    //            try
-    //            {
-    //                logoPath = Directory.GetFiles(baseDir, "logo.*").FirstOrDefault();
-    //            }
-    //            catch { /* ignore — directory scan failure just falls through to text fallback */ }
-    //        }
+            if (string.IsNullOrEmpty(logoPath))
+            {
+                try
+                {
+                    logoPath = Directory.GetFiles(baseDir, "logo.*").FirstOrDefault();
+                }
+                catch { /* ignore — directory scan failure just falls through to text fallback */ }
+            }
 
-            //if (!string.IsNullOrEmpty(logoPath))
-            //{
-            //    try
-            //    {
-            //        using var logo = Image.FromFile(logoPath);
-            //        float pad = 6f * sc;
-            //        float maxW = logoW - pad * 2, maxH = headerH - pad * 2;
-            //        float ratio = Math.Min(maxW / logo.Width, maxH / logo.Height);
-            //        float lw = logo.Width * ratio, lh = logo.Height * ratio;
-            //        g.DrawImage(logo, left + (logoW - lw) / 2f, y + (headerH - lh) / 2f, lw, lh);
-            //    }
-            //    catch { DrawFallbackLogoText(g, d.CompanyName, fTitle, left, y, logoW, headerH, cFmt); }
-            //}
-            //else DrawFallbackLogoText(g, d.CompanyName, fTitle, left, y, logoW, headerH, cFmt);
+            if (!string.IsNullOrEmpty(logoPath))
+            {
+                try
+                {
+                    using var logo = Image.FromFile(logoPath);
+                    float pad = 6f * sc;
+                    float maxW = logoW - pad * 2, maxH = headerH - pad * 2;
+                    float ratio = Math.Min(maxW / logo.Width, maxH / logo.Height);
+                    float lw = logo.Width * ratio, lh = logo.Height * ratio;
+                    g.DrawImage(logo, left + (logoW - lw) / 2f, y + (headerH - lh) / 2f, lw, lh);
+                }
+                catch { DrawFallbackLogoText(g, d.CompanyName, fTitle, left, y, logoW, headerH, cFmt); }
+            }
+            else DrawFallbackLogoText(g, d.CompanyName, fTitle, left, y, logoW, headerH, cFmt);
 
             // Company info
             float cy = y + 8f * sc;

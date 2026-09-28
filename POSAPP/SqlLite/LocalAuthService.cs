@@ -141,7 +141,7 @@ namespace POSAPP.SqlLite
 
                 return new UserInfo
                 {
-                    PKUserID = reader.GetInt32(0),
+                    PkUserId = reader.GetInt32(0),
                     UserID = reader.GetInt32(1),
                     Email = reader.GetString(2),
                     Mobile = reader.IsDBNull(3) ? null : reader.GetString(3),

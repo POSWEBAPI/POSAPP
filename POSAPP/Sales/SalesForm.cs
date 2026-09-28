@@ -4349,7 +4349,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
         {
             try
             {
-                _companyName = "EuroTex";
+                _companyName = "Purplemoon";
                 _companyAddress = "Address";
                 _companyPhone = "23456765432";
             }
@@ -8445,14 +8445,48 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
         }
 
         // ── Mirrors processSaleStock() in SalesOrderEntry.jsx — reduces server-side stock ──
-        // Prefer injecting IHttpClientFactory or using a static/shared client
+        
+        // ── Mirrors processSaleStock() in SalesOrderEntry.jsx — reduces server-side stock ──
         private static readonly HttpClient SharedHttp = new HttpClient
         {
-            Timeout = TimeSpan.FromSeconds(60) // adjust as needed
+            Timeout = TimeSpan.FromSeconds(60)
         };
 
+        private static void ApplyAuthHeader()
+        {
+            if (!string.IsNullOrWhiteSpace(CurrentUser.Token))
+            {
+                SharedHttp.DefaultRequestHeaders.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue(
+                        "Bearer",
+                        CurrentUser.Token);
+            }
+            else
+            {
+                SharedHttp.DefaultRequestHeaders.Authorization = null;
+            }
+        }
+
+        private static HttpClient CreateAuthedClient(TimeSpan? timeout = null)
+        {
+            var client = new HttpClient();
+
+            if (timeout.HasValue)
+                client.Timeout = timeout.Value;
+
+            if (!string.IsNullOrWhiteSpace(CurrentUser.Token))
+            {
+                client.DefaultRequestHeaders.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue(
+                        "Bearer",
+                        CurrentUser.Token);
+            }
+
+            return client;
+        }
         private async Task<bool> ProcessSaleStockAsync(int itemId, int companyId, decimal saleQty, string refKey)
         {
+            ApplyAuthHeader();
             try
             {
                 var payload = new
@@ -9036,6 +9070,25 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             }
             return confirmed;
         }
+        private async Task<(List<string> failed, List<string> queued)> ReduceStockForCartAsync(string invNo)
+        {
+            var failedStockItems = new List<string>();
+            var queuedStockItems = new List<string>();
+            foreach (var item in _cart)
+            {
+                if (item.ItemId <= 0) { failedStockItems.Add($"{item.Name} (item id not resolved)"); continue; }
+                decimal unitsPerPack = GetUnitsPerPackForCartItem(item);
+                decimal qtyToReduce = item.Qty * unitsPerPack;
+                string refKey = $"{invNo}-{item.ItemId}";
+                bool ok = await ProcessSaleStockAsync(item.ItemId, _companyId, qtyToReduce, refKey).ConfigureAwait(true);
+                if (!ok)
+                {
+                    bool queued = await QueueOfflineStockUpdateAsync(item.ItemId, _companyId, qtyToReduce).ConfigureAwait(true);
+                    if (queued) queuedStockItems.Add(item.Name); else failedStockItems.Add(item.Name);
+                }
+            }
+            return (failedStockItems, queuedStockItems);
+        }
         private async void btnTenderSale_Click(object sender, EventArgs e)
         {
             if (_cart.Count == 0) { ShowStatus("Cart is empty.", false); return; }
@@ -9137,55 +9190,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 }
                 else
                 {
-                //    var failedStockItems = new List<string>();
-                //    var queuedStockItems = new List<string>();
-                //    foreach (var item in _cart)
-                //    {
-                //        if (item.ItemId <= 0)
-                //        {
-                //            failedStockItems.Add($"{item.Name} (item id not resolved)");
-                //            continue;
-                //        }
-
-                //        // Reduce by qty × pack size of the sold UOM (e.g. 2 Cases of 12 = 24 units reduced).
-                //        decimal unitsPerPack = GetUnitsPerPackForCartItem(item);
-                //        decimal qtyToReduce = item.Qty * unitsPerPack;
-
-                //        // in btnTenderSale_Click loop
-                //        // ============================================================
-                //        // 1. ONLINE SALE - replace your existing stock-processing block
-                //        // ============================================================
-
-                //        string refKey = $"{invNo}-{item.ItemId}";
-
-                //        bool ok = await ProcessSaleStockAsync(
-                //            item.ItemId,
-                //            _companyId,
-                //            qtyToReduce,
-                //            refKey);
-
-                //        if (!ok)
-                //        {
-                //            bool queued = await QueueOfflineStockUpdateAsync(
-                //                item.ItemId,
-                //                _companyId,
-                //                qtyToReduce);
-
-                //            if (queued)
-                //                queuedStockItems.Add(item.Name);
-                //            else
-                //                failedStockItems.Add(item.Name);
-                //        }
-                //    }
-
-                //    if (queuedStockItems.Count > 0)
-                //        Debug.WriteLine("Stock updates queued for auto-sync: " + string.Join(", ", queuedStockItems));
-
-                //    if (failedStockItems.Count > 0)
-                //    {
-                //        ShowStatus("⚠ Stock NOT reduced on server for: " + string.Join(", ", failedStockItems), false);
-                //        Debug.WriteLine("Stock reduction failures: " + string.Join(", ", failedStockItems));
-                //    }
+                    // (legacy stock-processing block intentionally left commented out here — see below)
                 }
 
                 try
@@ -9204,137 +9209,132 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 if (PendingSalesOrderCache.Cache.ContainsKey(originalPendingNo))
                     PendingSalesOrderCache.Cache.Remove(originalPendingNo);
 
-                if (soResult.Success && !_lastOrderQueuedOffline && !string.IsNullOrWhiteSpace(soResult.SoNumber) && hasOutOfStockItems)
+                // ══════════════════════════════════════════════════════════════════
+                //  FIXED: stock is now ALWAYS reduced for a completed, non-offline
+                //  sale (previously it only reduced when hasOutOfStockItems was true,
+                //  which meant a normal sale with sufficient stock never called
+                //  ReduceStockForCartAsync at all).
+                // ══════════════════════════════════════════════════════════════════
+                if (soResult.Success && !_lastOrderQueuedOffline && !string.IsNullOrWhiteSpace(soResult.SoNumber))
                 {
-                    // Only reduce manually here if the SO for out-of-stock sales is created
-                    // WITHOUT triggering the server-side reduction (e.g. different Status).
-                    // If it's created as "Confirm" like a normal sale, remove this block too —
-                    // the server already handled it and this would double-reduce.
-                    var failedStockItems = new List<string>();
-                    var queuedStockItems = new List<string>();
-                    foreach (var item in _cart)
-                    {
-                        if (item.ItemId <= 0) { failedStockItems.Add($"{item.Name} (item id not resolved)"); continue; }
-                        decimal unitsPerPack = GetUnitsPerPackForCartItem(item);
-                        decimal qtyToReduce = item.Qty * unitsPerPack;
-                        string refKey = $"{invNo}-{item.ItemId}";
-                        bool ok = await ProcessSaleStockAsync(item.ItemId, _companyId, qtyToReduce, refKey).ConfigureAwait(true);
-                        if (!ok)
-                        {
-                            bool queued = await QueueOfflineStockUpdateAsync(item.ItemId, _companyId, qtyToReduce).ConfigureAwait(true);
-                            if (queued) queuedStockItems.Add(item.Name); else failedStockItems.Add(item.Name);
-                        }
-                    }
+                    // ── Always reduce stock for a completed, non-offline sale ──────────────
+                    var (failedStockItems, queuedStockItems) = await ReduceStockForCartAsync(invNo);
                     if (failedStockItems.Count > 0)
                         ShowStatus("⚠ Stock NOT reduced on server for: " + string.Join(", ", failedStockItems), false);
 
-                    ShowStatus($"📦 Sales Order {soResult.SoNumber} saved — invoice withheld (insufficient stock).", true);
-                    try { SalesRepository.MarkInvoicePaid(originalPendingNo); } catch { }
-                    try { SalesRepository.MarkInvoicePaid(invNo); } catch { }
-                }
-                else if (soResult.Success && !_lastOrderQueuedOffline && !string.IsNullOrWhiteSpace(soResult.SoNumber))
-                {
-                    var freshSo = await SalesOrderApi.GetSalesOrderBySoNumberAsync(soResult.SoNumber).ConfigureAwait(true);
-                    int? postedInvoiceId = null;
-                    bool invoiced = false;
+                    if (queuedStockItems.Count > 0)
+                        Debug.WriteLine("Stock updates queued for auto-sync: " + string.Join(", ", queuedStockItems));
 
-                    if (freshSo != null)
+                    if (hasOutOfStockItems)
                     {
-                        var invoiceResult = await CreateAndConfirmSOInvoiceAsync(freshSo).ConfigureAwait(true);
-                        invoiced = invoiceResult.Success;
-                        postedInvoiceId = invoiceResult.InvoiceId;
+                        // Over-stock sale allowed via StockSettings.AllowOutOfStockSale — SO saved,
+                        // invoice intentionally withheld (insufficient stock at time of sale).
+                        ShowStatus($"📦 Sales Order {soResult.SoNumber} saved — invoice withheld (insufficient stock).", true);
+                        try { SalesRepository.MarkInvoicePaid(originalPendingNo); } catch { }
+                        try { SalesRepository.MarkInvoicePaid(invNo); } catch { }
                     }
-
-                    if (!invoiced)
+                    else
                     {
-                        bool queued = await QueueOfflineSOInvoiceAsync(_companyId, soResult.SoNumber).ConfigureAwait(true);
-                        ShowStatus(queued
-                            ? $"📴 SO Invoice for {soResult.SoNumber} queued — will auto-post shortly."
-                            : $"⚠ Could not create or queue SO Invoice for {soResult.SoNumber}. Create it manually.", queued);
-                    }
+                        // ── Normal path: create + confirm SO Invoice, then post payment ────
+                        var freshSo = await SalesOrderApi.GetSalesOrderBySoNumberAsync(soResult.SoNumber).ConfigureAwait(true);
+                        int? postedInvoiceId = null;
+                        bool invoiced = false;
 
-                    // ── UPDATED: handle Cash and/or Bank Transfer, bind real BankAccountID ──
-                    // ── UPDATED: handle Cash and/or Bank Transfer, bind real BankAccountID ──
-                    // Credit sales never post a Customer Payment — invoice stays outstanding on account.
-                    if (!_isCreditSale && invoiced && (_splitCash > 0 || _splitUpi > 0))
-                    {
-                        int? bankAccountId = _splitUpi > 0 ? _selectedBankAccount?.BankAccountID : (int?)null;
-
-                        var savePayload = new SalesOrderApi.SaveCustomerPaymentPayload
+                        if (freshSo != null)
                         {
-                            CompanyId = _companyId,
-                            CustomerId = customerId,
-                            PaymentDate = DateTime.Now,
-                            PaymentMethod = _splitUpi > 0 ? "Bank Transfer" : "Cash",
-                            BankAccountId = bankAccountId ?? 0,
-                            ReferenceNo = _splitUpi > 0 ? (_selectedBankAccount?.AccountNumber ?? "") : "",
-                            CurrencyCode = _currencySymbol,
-                            ExchangeRate = 1m,
-                            Description = "POS Sale",
-                            Comments = $"Auto-settled from POS invoice {soResult.SoNumber}",
-                            PaymentStatus = "Draft",
-                            CreatedBy = CurrentUser.UserInfo.UserID,
-                            Settlements = new List<SalesOrderApi.CustomerPaymentSettlementDto>
-                    {
-                        new SalesOrderApi.CustomerPaymentSettlementDto
-                        {
-                            InvoiceID = postedInvoiceId ?? 0,
-                            InvoiceNo = soResult.SoNumber,
-                            InvoiceAmount = grandTotal,
-                            AmountToSettle = _splitCash + _splitUpi,
-                            RetentionAmount = 0m,
-                            DiscountAmount = 0m,
-                            WhtAmount = 0m
+                            var invoiceResult = await CreateAndConfirmSOInvoiceAsync(freshSo).ConfigureAwait(true);
+                            invoiced = invoiceResult.Success;
+                            postedInvoiceId = invoiceResult.InvoiceId;
                         }
-                    }
-                        };
 
-                        try
+                        if (!invoiced)
                         {
-                            var saveResult = await SalesOrderApi.SaveCustomerPaymentAsync(savePayload).ConfigureAwait(true);
-                            if (saveResult.Success && saveResult.PaymentId.HasValue)
-                            {
-                                bool posted = await SalesOrderApi.PostCustomerPaymentAsync(
-                                    saveResult.PaymentId.Value, CurrentUser.UserInfo.UserID, bankAccountId).ConfigureAwait(true);
+                            bool queued = await QueueOfflineSOInvoiceAsync(_companyId, soResult.SoNumber).ConfigureAwait(true);
+                            ShowStatus(queued
+                                ? $"📴 SO Invoice for {soResult.SoNumber} queued — will auto-post shortly."
+                                : $"⚠ Could not create or queue SO Invoice for {soResult.SoNumber}. Create it manually.", queued);
+                        }
 
-                                if (posted)
+                        // Credit sales never post a Customer Payment — invoice stays outstanding on account.
+                        if (!_isCreditSale && invoiced && (_splitCash > 0 || _splitUpi > 0))
+                        {
+                            int? bankAccountId = _splitUpi > 0 ? _selectedBankAccount?.BankAccountID : (int?)null;
+
+                            var savePayload = new SalesOrderApi.SaveCustomerPaymentPayload
+                            {
+                                CompanyId = _companyId,
+                                CustomerId = customerId,
+                                PaymentDate = DateTime.Now,
+                                PaymentMethod = _splitUpi > 0 ? "Bank Transfer" : "Cash",
+                                BankAccountId = bankAccountId ?? 0,
+                                ReferenceNo = _splitUpi > 0 ? (_selectedBankAccount?.AccountNumber ?? "") : "",
+                                CurrencyCode = _currencySymbol,
+                                ExchangeRate = 1m,
+                                Description = "POS Sale",
+                                Comments = $"Auto-settled from POS invoice {soResult.SoNumber}",
+                                PaymentStatus = "Draft",
+                                CreatedBy = CurrentUser.UserInfo.UserID,
+                                Settlements = new List<SalesOrderApi.CustomerPaymentSettlementDto>
+                        {
+                            new SalesOrderApi.CustomerPaymentSettlementDto
+                            {
+                                InvoiceID = postedInvoiceId ?? 0,
+                                InvoiceNo = soResult.SoNumber,
+                                InvoiceAmount = grandTotal,
+                                AmountToSettle = _splitCash + _splitUpi,
+                                RetentionAmount = 0m,
+                                DiscountAmount = 0m,
+                                WhtAmount = 0m
+                            }
+                        }
+                            };
+
+                            try
+                            {
+                                var saveResult = await SalesOrderApi.SaveCustomerPaymentAsync(savePayload).ConfigureAwait(true);
+                                if (saveResult.Success && saveResult.PaymentId.HasValue)
                                 {
-                                    ShowStatus($"✓ {savePayload.PaymentMethod} payment {saveResult.PaymentNo} posted against {soResult.SoNumber}.", true);
+                                    bool posted = await SalesOrderApi.PostCustomerPaymentAsync(
+                                        saveResult.PaymentId.Value, CurrentUser.UserInfo.UserID, bankAccountId).ConfigureAwait(true);
+
+                                    if (posted)
+                                    {
+                                        ShowStatus($"✓ {savePayload.PaymentMethod} payment {saveResult.PaymentNo} posted against {soResult.SoNumber}.", true);
+                                    }
+                                    else
+                                    {
+                                        // Saved but couldn't post — queue so it retries the post step only.
+                                        bool queued = await QueueOfflineCustomerPaymentAsync(
+                                            _companyId, soResult.SoNumber, savePayload, CurrentUser.UserInfo.UserID, bankAccountId).ConfigureAwait(true);
+                                        ShowStatus(queued
+                                            ? $"📴 {savePayload.PaymentMethod} payment saved but posting failed for {soResult.SoNumber} — queued to retry."
+                                            : $"⚠ {savePayload.PaymentMethod} payment saved but posting failed for {soResult.SoNumber}.", queued);
+                                    }
                                 }
                                 else
                                 {
-                                    // Saved but couldn't post — queue so it retries the post step only.
+                                    // Couldn't even save — queue full save+post.
                                     bool queued = await QueueOfflineCustomerPaymentAsync(
                                         _companyId, soResult.SoNumber, savePayload, CurrentUser.UserInfo.UserID, bankAccountId).ConfigureAwait(true);
                                     ShowStatus(queued
-                                        ? $"📴 {savePayload.PaymentMethod} payment saved but posting failed for {soResult.SoNumber} — queued to retry."
-                                        : $"⚠ {savePayload.PaymentMethod} payment saved but posting failed for {soResult.SoNumber}.", queued);
+                                        ? $"📴 Offline — {savePayload.PaymentMethod} payment for {soResult.SoNumber} queued, will sync automatically."
+                                        : $"⚠ Could not save or queue {savePayload.PaymentMethod} payment for {soResult.SoNumber}.", queued);
                                 }
                             }
-                            else
+                            catch (Exception ex)
                             {
-                                // Couldn't even save — queue full save+post.
+                                Debug.WriteLine("Auto payment: " + ex.Message);
                                 bool queued = await QueueOfflineCustomerPaymentAsync(
                                     _companyId, soResult.SoNumber, savePayload, CurrentUser.UserInfo.UserID, bankAccountId).ConfigureAwait(true);
                                 ShowStatus(queued
                                     ? $"📴 Offline — {savePayload.PaymentMethod} payment for {soResult.SoNumber} queued, will sync automatically."
-                                    : $"⚠ Could not save or queue {savePayload.PaymentMethod} payment for {soResult.SoNumber}.", queued);
+                                    : "⚠ Could not auto-post payment. Settle manually in AR.", queued);
                             }
                         }
-                        catch (Exception ex)
-                        {
-                            Debug.WriteLine("Auto payment: " + ex.Message);
-                            bool queued = await QueueOfflineCustomerPaymentAsync(
-                                _companyId, soResult.SoNumber, savePayload, CurrentUser.UserInfo.UserID, bankAccountId).ConfigureAwait(true);
-                            ShowStatus(queued
-                                ? $"📴 Offline — {savePayload.PaymentMethod} payment for {soResult.SoNumber} queued, will sync automatically."
-                                : "⚠ Could not auto-post payment. Settle manually in AR.", queued);
-                        }
+
+                        try { SalesRepository.MarkInvoicePaid(originalPendingNo); } catch { }
+                        try { SalesRepository.MarkInvoicePaid(invNo); } catch { }
                     }
-
-                    try { SalesRepository.MarkInvoicePaid(originalPendingNo); } catch { }
-                    try { SalesRepository.MarkInvoicePaid(invNo); } catch { }
-
                 }
                 else
                 {
@@ -9394,7 +9394,6 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                     btnTenderSale.Text = originalBtnText;
                 }
             }
-
         }
 
 

@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Diagnostics;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -39,6 +40,12 @@ public class ApiService
                 BaseAddress = new Uri(AppConfig.BaseUrl),
                 Timeout = TimeSpan.FromSeconds(30)
             };
+        }
+        var token = POSAPP.login.CurrentUser.Token;
+        if (!string.IsNullOrWhiteSpace(token))
+        {
+            _client.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
         }
     }
 
@@ -83,12 +90,17 @@ public class ApiService
             var content = new StringContent(json, Encoding.UTF8, "application/json");
 
             var response = await _client.PostAsync("api/UserAuth/login-by-password", content);
+
             if (!response.IsSuccessStatusCode)
             {
                 var errorText = await response.Content.ReadAsStringAsync();
+                Debug.WriteLine($"LoginAsync FAILED: {(int)response.StatusCode} {errorText}");
                 return $"ERROR: {(int)response.StatusCode} {response.StatusCode} - {errorText}";
             }
-            return await response.Content.ReadAsStringAsync();
+
+            var raw = await response.Content.ReadAsStringAsync();
+            Debug.WriteLine($"LoginAsync RAW RESPONSE: {raw}");   // check this in Output window
+            return raw;
         }
         catch (HttpRequestException ex) when (ex.InnerException is System.Net.Sockets.SocketException)
         {

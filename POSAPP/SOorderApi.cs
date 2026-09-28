@@ -41,7 +41,7 @@ namespace POSAPP.Payment
         [JsonPropertyName("data")]
         public List<SalesOrderApiRow>? Data { get; set; }
     }
-    
+
 
     public class CustomerApiRow
     {
@@ -49,8 +49,6 @@ namespace POSAPP.Payment
         [JsonPropertyName("customerName")] public string CustomerName { get; set; } = "";
     }
 
-    // Concrete class (not anonymous type) — needed so the ?? fallback
-    // in CreateSOInvoiceFromSalesOrderAsync type-checks.
     public class SOInvoiceLinePayload
     {
         [JsonPropertyName("itemNo")] public int ItemNo { get; set; }
@@ -87,15 +85,7 @@ namespace POSAPP.Payment
         [JsonPropertyName("itemID")] public int ItemID { get; set; }
         [JsonPropertyName("itemName")] public string ItemName { get; set; } = "";
     }
-   
- 
 
-
-
-    // ══════════════════════════════════════════════════════════════════════
-    //  NEW — Save Sales Order request payload
-    //  Matches: POST /api/SalesOrder
-    // ══════════════════════════════════════════════════════════════════════
     public class CreateSOLinePayload
     {
         [JsonPropertyName("itemId")] public int ItemId { get; set; }
@@ -107,9 +97,8 @@ namespace POSAPP.Payment
         [JsonPropertyName("charges")] public decimal Charges { get; set; }
         [JsonPropertyName("tax")] public decimal Tax { get; set; }
         [JsonPropertyName("total")] public decimal Total { get; set; }
-        [JsonPropertyName("taxID")] public int TaxID { get; set; }              // ← ADD
-        [JsonPropertyName("taxPercentage")] public decimal TaxPercentage { get; set; } // 
-
+        [JsonPropertyName("taxID")] public int TaxID { get; set; }
+        [JsonPropertyName("taxPercentage")] public decimal TaxPercentage { get; set; }
     }
     public class ChargeDto
     {
@@ -151,15 +140,11 @@ namespace POSAPP.Payment
 
     public static class SalesOrderApi
     {
-     
-        // TODO: set this to the same base URL your React app's api.js points to
-        //public static string BaseUrl = "https://shriposapi.mythitsolutions.co.in";
-       // public static string BaseUrl = "https://localhost:7022";
         public static string BaseUrl = AppConfig.BaseUrl.TrimEnd('/');
 
+        // Shared client used by most GET/POST/DELETE calls below.
         private static readonly HttpClient _http = new HttpClient();
 
-        // ONE declaration only — merged both option sets
         private static readonly JsonSerializerOptions _jsonOpts = new()
         {
             PropertyNameCaseInsensitive = true,
@@ -167,14 +152,55 @@ namespace POSAPP.Payment
         };
 
         private static List<CustomerApiRow>? _customerCache;
-        // SO numbers successfully converted to SOInvoice this session — filtered
-        // out of the pending list so they don't reappear (server SO status is
-        // not being changed by this client, so without this they'd resurface).
         public static readonly HashSet<string> InvoicedSoNumbers = new(StringComparer.OrdinalIgnoreCase);
+
+        // ══════════════════════════════════════════════════════════════════
+        //  AUTH HELPERS — NEW
+        // ══════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Refreshes the Authorization header on the shared _http client using
+        /// whatever token is currently stored on CurrentUser. Call this as the
+        /// first line of every method that uses _http, since _http is created
+        /// once (before login happens) and never picks up the token otherwise.
+        /// </summary>
+        private static void ApplyAuthHeader()
+        {
+            if (!string.IsNullOrWhiteSpace(CurrentUser.Token))
+            {
+                _http.DefaultRequestHeaders.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", CurrentUser.Token);
+            }
+            else
+            {
+                _http.DefaultRequestHeaders.Authorization = null;
+            }
+        }
+
+        /// <summary>
+        /// Creates a fresh HttpClient with the current Bearer token attached,
+        /// for the methods below that create their own local HttpClient
+        /// instead of using the shared _http field.
+        /// </summary>
+        private static HttpClient CreateAuthedClient(TimeSpan? timeout = null)
+        {
+            var client = new HttpClient();
+            if (timeout.HasValue) client.Timeout = timeout.Value;
+
+            if (!string.IsNullOrWhiteSpace(CurrentUser.Token))
+            {
+                client.DefaultRequestHeaders.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", CurrentUser.Token);
+            }
+            return client;
+        }
+
+        // ══════════════════════════════════════════════════════════════════
 
         private static async Task<List<CustomerApiRow>> GetCustomersAsync()
         {
             if (_customerCache != null) return _customerCache;
+            ApplyAuthHeader();
             try
             {
                 var resp = await _http.GetAsync(new Uri(new Uri(BaseUrl), "api/Customer"));
@@ -201,12 +227,6 @@ namespace POSAPP.Payment
             return _customerCache;
         }
 
-        /// <summary>
-        /// Public accessor so callers (e.g. SalesForm) can resolve a CustomerID
-        /// from the free-typed customer name before creating a Sales Order.
-        /// Returns 0 if no match is found (e.g. Walk-in).
-        /// </summary>
-        /// 
         public class BankAccountDto
         {
             public int BankAccountID { get; set; }
@@ -227,8 +247,8 @@ namespace POSAPP.Payment
             var result = new List<BankAccountDto>();
             try
             {
-                using var http = new System.Net.Http.HttpClient();
-                http.Timeout = TimeSpan.FromSeconds(15);
+                // CHANGED — was `new HttpClient()` with no auth header
+                using var http = CreateAuthedClient(TimeSpan.FromSeconds(15));
                 var resp = await http.GetAsync($"{BaseUrl}/api/Bank?companyId={companyId}").ConfigureAwait(false);
 
                 string json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
@@ -243,7 +263,6 @@ namespace POSAPP.Payment
 
                 if (arr.ValueKind != JsonValueKind.Array) return result;
 
-                // Case-insensitive, multi-alias property lookup — API field names vary.
                 static string GetStr(JsonElement el, params string[] names)
                 {
                     foreach (var prop in el.EnumerateObject())
@@ -278,7 +297,7 @@ namespace POSAPP.Payment
                                 if (prop.Value.ValueKind == JsonValueKind.Number)
                                     return prop.Value.GetInt32() != 0;
                             }
-                    return true; // default active if no status field present
+                    return true;
                 }
 
                 foreach (var row in arr.EnumerateArray())
@@ -294,7 +313,6 @@ namespace POSAPP.Payment
                         Status = GetBool(row, "status", "isActive", "active")
                     };
 
-                    // Fallback so a row is never blank even if BankName mapping missed.
                     if (string.IsNullOrWhiteSpace(b.BankName))
                         b.BankName = !string.IsNullOrWhiteSpace(b.AccountName) ? b.AccountName
                                    : !string.IsNullOrWhiteSpace(b.AccountNumber) ? $"Account {b.AccountNumber}"
@@ -312,6 +330,7 @@ namespace POSAPP.Payment
             }
             return result;
         }
+
         public static async Task<int> GetCustomerIdByNameAsync(string name)
         {
             if (string.IsNullOrWhiteSpace(name)) return 0;
@@ -320,7 +339,7 @@ namespace POSAPP.Payment
                 c.CustomerName.Equals(name, StringComparison.OrdinalIgnoreCase));
             return match?.CustomerID ?? 0;
         }
-        /// <summary>Public accessor so SalesInvoiceApi can resolve customer names for invoices.</summary>
+
         public static async Task<Dictionary<int, string>> GetCustomerNameMapAsync()
         {
             var customers = await GetCustomersAsync();
@@ -334,6 +353,7 @@ namespace POSAPP.Payment
         private static async Task<List<ItemApiRow>> GetItemsAsync()
         {
             if (_itemCache != null) return _itemCache;
+            ApplyAuthHeader();
             try
             {
                 var resp = await _http.GetAsync(new Uri(new Uri(BaseUrl), "api/item"));
@@ -360,7 +380,6 @@ namespace POSAPP.Payment
             return _itemCache;
         }
 
-        /// <summary>Public accessor so PendingInvoicesForm can resolve item names for SO lines.</summary>
         public static async Task<Dictionary<int, string>> GetItemNameMapAsync()
         {
             var items = await GetItemsAsync();
@@ -371,6 +390,7 @@ namespace POSAPP.Payment
 
         public static async Task<List<(SalesOrderApiRow Order, string CustomerName)>> GetPendingSalesOrdersAsync()
         {
+            ApplyAuthHeader();
             try
             {
                 var resp = await _http.GetAsync(new Uri(new Uri(BaseUrl), "api/SalesOrder"));
@@ -428,6 +448,7 @@ namespace POSAPP.Payment
 
         public static async Task<SalesOrderApiRow?> GetSalesOrderByIdAsync(int soId)
         {
+            ApplyAuthHeader();
             try
             {
                 var resp = await _http.GetAsync(new Uri(new Uri(BaseUrl), $"api/SalesOrder/{soId}"));
@@ -444,6 +465,7 @@ namespace POSAPP.Payment
 
         public static async Task<bool> DeleteSalesOrderAsync(int soId)
         {
+            ApplyAuthHeader();
             try
             {
                 var resp = await _http.DeleteAsync(new Uri(new Uri(BaseUrl), $"api/SalesOrder/{soId}"));
@@ -456,14 +478,10 @@ namespace POSAPP.Payment
             }
         }
 
-        /// <summary>
-        /// NEW — creates a Sales Order via POST /api/SalesOrder using the exact
-        /// payload shape the API expects. Returns (success, soId, soNumber) —
-        /// soId/soNumber are populated only if the API returns them.
-        /// </summary>
         public static async Task<(bool Success, int? SoId, string? SoNumber)> CreateSalesOrderAsync(
       CreateSalesOrderPayload payload)
         {
+            ApplyAuthHeader();
             try
             {
                 string requestJson = JsonSerializer.Serialize(payload);
@@ -475,8 +493,6 @@ namespace POSAPP.Payment
 
                 var json = await resp.Content.ReadAsStringAsync();
 
-                // ── Always log the raw response — this is what we need to see if
-                //    SoNumber keeps coming back null. Leave this in until confirmed fixed. ──
                 System.Diagnostics.Debug.WriteLine(
                     $"CreateSalesOrderAsync RESPONSE ({(int)resp.StatusCode}): {json}");
 
@@ -497,9 +513,6 @@ namespace POSAPP.Payment
                         using var doc = JsonDocument.Parse(json);
                         var root = doc.RootElement;
 
-                        // ── Case-insensitive property lookup — JsonElement.TryGetProperty is
-                        //    case-sensitive, which was the real reason soNumber kept coming
-                        //    back null (actual API casing didn't match our hardcoded guesses). ──
                         static bool TryGetPropertyCI(JsonElement obj, string name, out JsonElement value)
                         {
                             foreach (var prop in obj.EnumerateObject())
@@ -514,8 +527,6 @@ namespace POSAPP.Payment
                             return false;
                         }
 
-                        // ── Last-resort: find any property whose NAME contains a keyword,
-                        //    for API shapes we haven't seen/guessed yet. ──
                         static bool TryFindPropertyContaining(JsonElement obj, string keyword, out JsonElement value, out string? foundName)
                         {
                             foreach (var prop in obj.EnumerateObject())
@@ -531,13 +542,12 @@ namespace POSAPP.Payment
                             foundName = null;
                             return false;
                         }
-                         
+
                         JsonElement target = default;
                         bool foundTarget = false;
 
                         if (root.ValueKind == JsonValueKind.Object)
                         {
-                            // Try common wrapper property names, in order (case-insensitive)
                             string[] wrapperNames = { "data", "result", "salesOrder", "so", "order" };
                             JsonElement wrapper = default;
                             bool hasWrapper = false;
@@ -565,7 +575,6 @@ namespace POSAPP.Payment
                                 }
                             }
 
-                            // No known wrapper — root itself might be the SO object
                             if (!foundTarget)
                             {
                                 target = root;
@@ -580,7 +589,6 @@ namespace POSAPP.Payment
 
                         if (foundTarget && target.ValueKind == JsonValueKind.Object)
                         {
-                            // ── SoId — case-insensitive match against known variants ──
                             string[] idNames = { "soId", "soID", "id" };
                             foreach (var n in idNames)
                             {
@@ -600,7 +608,6 @@ namespace POSAPP.Payment
                                 }
                             }
 
-                            // ── SoNumber — case-insensitive match against known variants ──
                             string[] numNames =
                             {
                         "soNumber", "soNo", "orderNumber", "invoiceNo", "number"
@@ -618,8 +625,6 @@ namespace POSAPP.Payment
                                 }
                             }
 
-                            // ── Last-resort fallback: none of the known names matched —
-                            //    scan for ANY property whose name contains "number". ──
                             if (soNumber == null)
                             {
                                 if (TryFindPropertyContaining(target, "number", out var numEl, out var foundName)
@@ -632,7 +637,6 @@ namespace POSAPP.Payment
                                 }
                             }
 
-                            // ── Same last-resort fallback for SoId ──
                             if (soId == null)
                             {
                                 if (TryFindPropertyContaining(target, "Id", out var idEl, out var foundName)
@@ -647,8 +651,6 @@ namespace POSAPP.Payment
 
                         if (soId == null && soNumber == null)
                         {
-                            // Dump every top-level property name we actually saw, so the real
-                            // casing/shape is visible in the log instead of guessing again.
                             var seenNames = foundTarget && target.ValueKind == JsonValueKind.Object
                                 ? string.Join(", ", target.EnumerateObject().Select(p => p.Name))
                                 : "(no object target found)";
@@ -664,8 +666,6 @@ namespace POSAPP.Payment
                     }
                 }
 
-                // ── Fallback: if we got a SoId but no SoNumber, look the order up by ID
-                //    via the existing GET endpoint, which we know parses SONumber correctly. ──
                 if (soNumber == null && soId.HasValue && soId.Value > 0)
                 {
                     var fetched = await GetSalesOrderByIdAsync(soId.Value).ConfigureAwait(false);
@@ -685,14 +685,15 @@ namespace POSAPP.Payment
                 return (false, null, null);
             }
         }
+
         public static async Task<(int? InvoiceId, string? Error)> CreateSOInvoiceFromSalesOrderAsync(SalesOrderApiRow so)
         {
+            ApplyAuthHeader();
             try
             {
                 List<SOInvoiceLinePayload> lines;
                 if (so.Lines != null)
                 {
-                    // Item name often isn't returned on SO lines — resolve missing ones from the item cache.
                     Dictionary<int, string>? itemNameMap = null;
                     if (so.Lines.Any(l => string.IsNullOrWhiteSpace(l.ItemName)))
                     {
@@ -728,7 +729,6 @@ namespace POSAPP.Payment
                 {
                     lines = new List<SOInvoiceLinePayload>();
                 }
-                // ... rest unchanged
 
                 var payload = new SOInvoicePayload
                 {
@@ -788,7 +788,6 @@ namespace POSAPP.Payment
                     }
                 }
 
-                // Success status but no invoiceID in response — still treat as success
                 return (0, null);
             }
             catch (Exception ex)
@@ -797,8 +796,10 @@ namespace POSAPP.Payment
                 return (null, ex.Message);
             }
         }
+
         public static async Task<List<SalesOrderApiRow>> GetAllSalesOrdersAsync()
         {
+            ApplyAuthHeader();
             try
             {
                 var resp = await _http.GetAsync(new Uri(new Uri(BaseUrl), "api/SalesOrder"));
@@ -830,13 +831,13 @@ namespace POSAPP.Payment
             return all.FirstOrDefault(r =>
                 string.Equals(r.SONumber, soNumber, StringComparison.OrdinalIgnoreCase));
         }
-        // In SalesOrderApi.cs
+
         public static async Task<bool> ConfirmSOInvoiceAsync(int invoiceId)
         {
             try
             {
-                using var http = new System.Net.Http.HttpClient();
-                http.Timeout = TimeSpan.FromSeconds(30);
+                // CHANGED — was `new HttpClient()` with no auth header
+                using var http = CreateAuthedClient(TimeSpan.FromSeconds(30));
 
                 int userId = CurrentUser.UserInfo?.UserID ?? 0;
 
@@ -858,6 +859,7 @@ namespace POSAPP.Payment
                 return false;
             }
         }
+
         public class CustomerPaymentSettlementDto
         {
             [JsonPropertyName("invoiceID")] public int InvoiceID { get; set; }
@@ -873,7 +875,7 @@ namespace POSAPP.Payment
         {
             [JsonPropertyName("companyID")] public int CompanyId { get; set; }
             [JsonPropertyName("customerID")] public int CustomerId { get; set; }
-            [JsonPropertyName("paymentDate")] public DateTime PaymentDate { get; set; } 
+            [JsonPropertyName("paymentDate")] public DateTime PaymentDate { get; set; }
             [JsonPropertyName("paymentMethod")] public string PaymentMethod { get; set; } = "Cash";
             [JsonPropertyName("bankAccountID")] public int BankAccountId { get; set; } = 0;
             [JsonPropertyName("referenceNo")] public string ReferenceNo { get; set; } = "";
@@ -885,17 +887,16 @@ namespace POSAPP.Payment
             [JsonPropertyName("createdBy")] public int CreatedBy { get; set; }
             [JsonPropertyName("settlements")] public List<CustomerPaymentSettlementDto> Settlements { get; set; } = new();
         }
-         
+
         public static async Task<(bool Success, int? PaymentId, string PaymentNo)> SaveCustomerPaymentAsync(SaveCustomerPaymentPayload payload)
         {
             try
             {
-                using var http = new System.Net.Http.HttpClient();
-                http.Timeout = TimeSpan.FromSeconds(30);
+                // CHANGED — was `new HttpClient()` with no auth header
+                using var http = CreateAuthedClient(TimeSpan.FromSeconds(30));
                 string json = System.Text.Json.JsonSerializer.Serialize(payload);
                 using var content = new System.Net.Http.StringContent(json, System.Text.Encoding.UTF8, "application/json");
 
-                // was: $"{BaseUrl}/api/ar/customerpayment/save"
                 var resp = await http.PostAsync($"{BaseUrl}/api/CustomerPayment/SaveCustomerPayment", content).ConfigureAwait(false);
                 if (!resp.IsSuccessStatusCode) return (false, null, null);
 
@@ -924,13 +925,12 @@ namespace POSAPP.Payment
         {
             try
             {
-                using var http = new System.Net.Http.HttpClient();
-                http.Timeout = TimeSpan.FromSeconds(30);
+                // CHANGED — was `new HttpClient()` with no auth header
+                using var http = CreateAuthedClient(TimeSpan.FromSeconds(30));
                 var body = new { ModifiedBy = modifiedBy, BankAccountID = bankAccountId };
                 string json = System.Text.Json.JsonSerializer.Serialize(body);
                 using var content = new System.Net.Http.StringContent(json, System.Text.Encoding.UTF8, "application/json");
 
-                // was: POST $"{BaseUrl}/api/ar/customerpayment/{paymentId}/post"
                 var request = new HttpRequestMessage(HttpMethod.Put, $"{BaseUrl}/api/CustomerPayment/{paymentId}/post")
                 {
                     Content = content

@@ -287,7 +287,7 @@ namespace POSAPP
                 var g = e.Graphics;
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 var logoRc = new Rectangle(85, 14, 54, 54);
-                string logoPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logo1.jpg");
+                string logoPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logo.jpg");
                 if (System.IO.File.Exists(logoPath))
                 {
                     try
@@ -528,12 +528,19 @@ namespace POSAPP
             const int NAV_H = 44;
             var buttons = new Button[]
             {
-                btnNavDashboard, btnNavSales, btnNavCustomers, btnNavSalesReturn,
-                btnNavAccounting, btnNavReports, btnNavSettings, btnNavFloat,
-                btnNavTenderDeclaration, btnNavCloseShift, btnNavProfile,
+        btnNavDashboard, btnNavSales, btnNavCustomers, btnNavSalesReturn,
+        btnNavAccounting, btnNavReports, btnNavSettings, btnNavFloat,
+        btnNavTenderDeclaration, btnNavCloseShift, btnNavProfile,
             };
+
             int y = NAV_START;
-            foreach (var btn in buttons) { btn.Location = new Point(0, y); y += NAV_H; }
+            foreach (var btn in buttons)
+            {
+                if (btn == null || !btn.Visible) continue;
+                btn.Location = new Point(0, y);
+                y += NAV_H;
+            }
+
             if (panelProfileSubmenu.Visible) { panelProfileSubmenu.Location = new Point(0, y); y += panelProfileSubmenu.Height; }
             panelSidebar.Invalidate();
         }
@@ -1535,10 +1542,10 @@ namespace POSAPP
                 {
                     btn.Click += (s, e2) =>
                     {
-                        SetActiveNav(btnNavSales);
+                        if (!Guard(Menu.Sales)) return;   // ADD THIS
 
-                        ShowPage(
-                            new SalesForm(_selectedCompanyId));
+                        SetActiveNav(btnNavSales);
+                        ShowPage(new SalesForm(_selectedCompanyId));
                     };
                 }
 
@@ -1546,12 +1553,10 @@ namespace POSAPP
                 {
                     btn.Click += (s, e2) =>
                     {
-                        SetActiveNav(btnNavSalesReturn);
+                        if (!Guard(Menu.SalesReturn)) return;   // ADD THIS
 
-                        ShowPage(
-                            new SalesReturnForm(
-                                _selectedCompanyId,
-                                _currencySymbol));
+                        SetActiveNav(btnNavSalesReturn);
+                        ShowPage(new SalesReturnForm(_selectedCompanyId, _currencySymbol));
                     };
                 }
 
