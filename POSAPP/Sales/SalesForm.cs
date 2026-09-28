@@ -266,6 +266,21 @@ namespace POSAPP
         // ── API URL ───────────────────────────────────────────────────────────
         private static string ApiBaseUrl => AppConfig.BaseUrl.TrimEnd('/');
 
+        // Toast window that never steals focus from the search box
+        internal class ToastForm : Form
+        {
+            protected override bool ShowWithoutActivation => true;
+            protected override CreateParams CreateParams
+            {
+                get
+                {
+                    var cp = base.CreateParams;
+                    cp.ExStyle |= 0x08000000 | 0x00000080; // WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
+                    return cp;
+                }
+            }
+        }
+
         // ── Constructor ───────────────────────────────────────────────────────
         public SalesForm(int companyId)
         {
@@ -387,10 +402,9 @@ namespace POSAPP
             if (!System.IO.File.Exists(_dbPath))
             {
                 ShowStatus($"Database not found: {_dbPath}", false);
-                MessageBox.Show(
-                    $"Database file not found!\n\nExpected:\n{_dbPath}\n\n" +
-                    "Copy ShriPOS.db next to POSAPP.exe and restart.",
-                    "Database Missing", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                ShowAlert("Database Missing",
+                    $"Database file not found!\n\nExpected:\n{_dbPath}\n\nCopy ShriPOS.db next to POSAPP.exe and restart.",
+                    AlertKind.Error);
                 return;
             }
 
@@ -491,8 +505,189 @@ namespace POSAPP
             PositionFooterButtons();
             BuildNumpadDisplay();
             BuildChargesButton();
+            this.BeginInvoke(new Action(FocusSearchBox));
             // panelLeft.PerformLayout();
             // _ = SyncProductsFromApiInBackgroundAsync();   // syncs API → SQLite silently
+        }
+        // ══════════════════════════════════════════════════════════════════════
+        //  STYLED ALERTS  (modal popup + non-blocking toast)
+        // ══════════════════════════════════════════════════════════════════════
+        private enum AlertKind { Error, Warning, Info, Success }
+
+        private void ShowAlert(string title, string message, AlertKind kind = AlertKind.Warning)
+        {
+            if (this.InvokeRequired) { this.Invoke(new Action(() => ShowAlert(title, message, kind))); return; }
+
+            Color accent; string icon;
+            switch (kind)
+            {
+                case AlertKind.Error: accent = AccRed; icon = "⛔"; break;
+                case AlertKind.Success: accent = AccGreen; icon = "✅"; break;
+                case AlertKind.Info: accent = AccBlue; icon = "ℹ"; break;
+                default: accent = AccOrange; icon = "⚠"; break;
+            }
+
+            const int W = 460, M = 28;
+            using var msgFont = new Font("Segoe UI", 10F);
+            int msgH = TextRenderer.MeasureText(message, msgFont, new Size(W - M * 2, 0), TextFormatFlags.WordBreak).Height + 6;
+            msgH = Math.Min(msgH, 320);
+
+            var dlg = new Form
+            {
+                FormBorderStyle = FormBorderStyle.None,
+                StartPosition = FormStartPosition.CenterParent,
+                BackColor = Color.FromArgb(22, 26, 36),
+                ShowInTaskbar = false,
+                KeyPreview = true
+            };
+
+            dlg.Controls.Add(new Panel { Size = new Size(W, 5), Location = Point.Empty, BackColor = accent });
+
+            int y = 29;
+            var ico = new Label
+            {
+                Text = icon,
+                Font = new Font("Segoe UI Emoji", 20F),
+                ForeColor = accent,
+                BackColor = Color.FromArgb(38, 42, 54),
+                Size = new Size(56, 56),
+                Location = new Point((W - 56) / 2, y),
+                TextAlign = ContentAlignment.MiddleCenter
+            };
+            ico.Region = MakeRoundedRegion(ico.Size, 28);
+            dlg.Controls.Add(ico);
+            y += 56 + 12;
+
+            dlg.Controls.Add(new Label
+            {
+                Text = title,
+                Font = new Font("Segoe UI", 13F, FontStyle.Bold),
+                ForeColor = TextWhite,
+                BackColor = Color.Transparent,
+                AutoSize = false,
+                Size = new Size(W, 30),
+                Location = new Point(0, y),
+                TextAlign = ContentAlignment.MiddleCenter
+            });
+            y += 34;
+
+            dlg.Controls.Add(new Label
+            {
+                Text = message,
+                Font = msgFont,
+                ForeColor = TextMuted,
+                BackColor = Color.Transparent,
+                AutoSize = false,
+                Size = new Size(W - M * 2, msgH),
+                Location = new Point(M, y),
+                TextAlign = ContentAlignment.TopCenter
+            });
+            y += msgH + 20;
+
+            var btnOk = new Button
+            {
+                Text = "OK",
+                Font = new Font("Segoe UI", 10.5F, FontStyle.Bold),
+                ForeColor = Color.White,
+                BackColor = accent,
+                FlatStyle = FlatStyle.Flat,
+                Size = new Size(W - M * 2, 42),
+                Location = new Point(M, y),
+                Cursor = Cursors.Hand
+            };
+            btnOk.FlatAppearance.BorderSize = 0;
+            btnOk.Region = MakeRoundedRegion(btnOk.Size, 10);
+            btnOk.Click += (s, e) => dlg.Close();
+            dlg.Controls.Add(btnOk);
+            y += 42 + 24;
+
+            dlg.ClientSize = new Size(W, y);
+            dlg.Region = MakeRoundedRegion(dlg.ClientSize, 16);
+            dlg.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Enter || e.KeyCode == Keys.Escape) { e.Handled = true; dlg.Close(); }
+            };
+            dlg.Shown += (s, e) => btnOk.Focus();
+            dlg.ShowDialog(this);
+
+            FocusSearchBox();
+        }
+
+        private ToastForm _toast;
+        private System.Windows.Forms.Timer _toastTimer;
+
+        private void CloseToast()
+        {
+            _toastTimer?.Stop(); _toastTimer?.Dispose(); _toastTimer = null;
+            if (_toast != null && !_toast.IsDisposed) _toast.Close();
+            _toast = null;
+        }
+
+        // Non-blocking popup — does NOT take focus, so scanning/typing is never interrupted.
+        private void ShowToast(string message, bool isError = true, int durationMs = 3500)
+        {
+            if (this.IsDisposed || !this.IsHandleCreated || !this.Visible) return;
+
+            bool warn = message.TrimStart().StartsWith("⚠");
+            Color accent = isError ? (warn ? AccOrange : AccRed) : AccGreen;
+
+            CloseToast();
+
+            const int W = 480;
+            using var f = new Font("Segoe UI", 10F, FontStyle.Bold);
+            int textW = W - 60;
+            int textH = TextRenderer.MeasureText(message, f, new Size(textW, 0), TextFormatFlags.WordBreak).Height;
+            int H = Math.Max(64, Math.Min(textH + 28, 220));
+
+            var t = new ToastForm
+            {
+                FormBorderStyle = FormBorderStyle.None,
+                StartPosition = FormStartPosition.Manual,
+                BackColor = Color.FromArgb(30, 34, 46),
+                ShowInTaskbar = false,
+                Size = new Size(W, H),
+                Cursor = Cursors.Hand
+            };
+            t.Region = MakeRoundedRegion(t.Size, 12);
+
+            var bar = new Panel { Size = new Size(6, H), Location = Point.Empty, BackColor = accent };
+            var lbl = new Label
+            {
+                Text = message,
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+                ForeColor = TextWhite,
+                BackColor = Color.Transparent,
+                AutoSize = false,
+                Size = new Size(textW, H - 16),
+                Location = new Point(18, 8),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            var x = new Label
+            {
+                Text = "✕",
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+                ForeColor = TextMuted,
+                BackColor = Color.Transparent,
+                AutoSize = false,
+                Size = new Size(28, 28),
+                Location = new Point(W - 34, 4),
+                TextAlign = ContentAlignment.MiddleCenter
+            };
+            t.Controls.AddRange(new Control[] { bar, lbl, x });
+            t.Click += (s, e) => CloseToast();
+            lbl.Click += (s, e) => CloseToast();
+            x.Click += (s, e) => CloseToast();
+
+            var owner = (this.TopLevelControl as Form) ?? this;
+            Point pt = this.PointToScreen(new Point((this.ClientSize.Width - W) / 2, 70));
+            t.Location = pt;
+
+            _toast = t;
+            t.Show(owner);
+
+            _toastTimer = new System.Windows.Forms.Timer { Interval = durationMs };
+            _toastTimer.Tick += (s, e) => CloseToast();
+            _toastTimer.Start();
         }
         private void BuildChargesButton()
         {
@@ -5351,9 +5546,96 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
         private void TxtSearch_KeyDown(object sender, KeyEventArgs e)
         {
             if (e.KeyCode == Keys.Down && listSearchResults.Visible && listSearchResults.Items.Count > 0)
-            { listSearchResults.Focus(); listSearchResults.SelectedIndex = 0; e.Handled = true; }
+            {
+                listSearchResults.Focus();
+                listSearchResults.SelectedIndex = 0;
+                e.Handled = true;
+            }
             else if (e.KeyCode == Keys.Enter)
-            { AddProductByName(GetRealText(txtSearch)); e.Handled = true; e.SuppressKeyPress = true; }
+            {
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+
+                string entry = GetRealText(txtSearch).Trim();
+                if (entry.Length == 0) return;
+
+                ClearSearchBox();                       // clear immediately so the next scan starts clean
+                _ = EnqueueSearchEntryAsync(entry);
+            }
+        }
+        // ══════════════════════════════════════════════════════════════════════
+        //  SEARCH / SCAN ENTRY  (Enter key + barcode scanner share this path)
+        // ══════════════════════════════════════════════════════════════════════
+        private readonly Queue<string> _entryQueue = new();
+        private bool _processingEntries = false;
+
+        private void FocusSearchBox()
+        {
+            if (txtSearch == null || txtSearch.IsDisposed || !txtSearch.Enabled) return;
+            if (!txtSearch.Focused) txtSearch.Focus();
+        }
+
+        private void ClearSearchBox()
+        {
+            if (txtSearch == null || txtSearch.IsDisposed) return;
+            listSearchResults.Visible = false;
+            listSearchResults.Items.Clear();
+            if (!txtSearch.Focused) txtSearch.Focus();   // Enter handler strips the placeholder
+            txtSearch.Text = "";
+            txtSearch.ForeColor = TextWhite;
+            _searchDebounce?.Stop();
+        }
+
+        // Barcode (exact, padded, trimmed) → exact name → name starts-with → name contains → barcode contains
+        private Product ResolveProductForEntry(string raw)
+        {
+            string code = (raw ?? "").Trim();
+            if (code.Length == 0 || _catalog == null) return null;
+
+            foreach (var key in new[] { code, code.PadLeft(13, '0'), code.TrimStart('0') })
+                if (key.Length > 0 && _barcodeMap.TryGetValue(key, out var byBarcode))
+                    return byBarcode;
+
+            var byName = _catalog.FirstOrDefault(p => p.Name.Equals(code, StringComparison.OrdinalIgnoreCase));
+            if (byName != null) return byName;
+
+            return _catalog.Where(p => p.Name.StartsWith(code, StringComparison.OrdinalIgnoreCase))
+                           .OrderBy(p => p.Name.Length).FirstOrDefault()
+                ?? _catalog.FirstOrDefault(p => p.Name.IndexOf(code, StringComparison.OrdinalIgnoreCase) >= 0)
+                ?? _catalog.FirstOrDefault(p => !string.IsNullOrWhiteSpace(p.Barcode)
+                                             && p.Barcode.IndexOf(code, StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        // Processes entries one at a time so rapid scans can't overlap the async stock check
+        private async Task EnqueueSearchEntryAsync(string entry)
+        {
+            _entryQueue.Enqueue(entry);
+            if (_processingEntries) return;
+
+            _processingEntries = true;
+            try
+            {
+                while (_entryQueue.Count > 0)
+                {
+                    string next = _entryQueue.Dequeue();
+                    var prod = ResolveProductForEntry(next);
+
+                    if (prod == null)
+                    {
+                        ShowStatus($"⛔ Product / barcode not found: {next}", false);
+                        continue;
+                    }
+
+                    int before = _cart.Count;
+                    await AddToCart(prod, 1).ConfigureAwait(true);
+                    ShowStatus($"✓ Added: {prod.Name}", true);
+                }
+            }
+            finally
+            {
+                _processingEntries = false;
+                FocusSearchBox();
+            }
         }
 
         private void listSearchResults_KeyDown(object sender, KeyEventArgs e)
@@ -5375,14 +5657,10 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
         {
             if (string.IsNullOrEmpty(name)) return;
 
-            var prod = _catalog.FirstOrDefault(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
-                    ?? _catalog.FirstOrDefault(p => p.Name.ToLower().Contains(name.ToLower()));
+            var prod = ResolveProductForEntry(name);
+            if (prod == null) { ShowStatus("⛔ Product not found: " + name, false); FocusSearchBox(); return; }
 
-            if (prod == null) { ShowStatus("Product not found: " + name, false); return; }
-
-            txtSearch.ForeColor = TextMuted;
-            listSearchResults.Visible = false;
-            listSearchResults.Items.Clear();
+            ClearSearchBox();
 
             if (_isD365Mode && _d365Details.ContainsKey(prod.Barcode))
                 ShowProductDetailPopup(prod);
@@ -5395,7 +5673,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             else
                 await AddToCart(prod, 1);
 
-            this.ActiveControl = null;
+            FocusSearchBox();   // instead of ActiveControl = null
         }
         private async Task<bool> ShowPriceGroupAuthDialogAsync(Form owner, string newGroup, decimal newPrice)
         {
@@ -6002,7 +6280,25 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             if (!char.IsControl(e.KeyChar) && !char.IsLetterOrDigit(e.KeyChar) && e.KeyChar != '-')
                 e.Handled = true;
         }
+        protected override void OnKeyPress(KeyPressEventArgs e)
+        {
+            Control active = this;
+            while (active is ContainerControl cc && cc.ActiveControl != null) active = cc.ActiveControl;
 
+            bool typingElsewhere = active is TextBoxBase
+                                || active is NumericUpDown
+                                || (active is ComboBox cb && cb.DroppedDown);
+
+            if (!typingElsewhere && !char.IsControl(e.KeyChar) && txtSearch.Enabled)
+            {
+                txtSearch.Focus();                       // Enter handler clears placeholder text
+                txtSearch.Text = e.KeyChar.ToString();
+                txtSearch.SelectionStart = txtSearch.Text.Length;
+                e.Handled = true;
+                return;
+            }
+            base.OnKeyPress(e);
+        }
         //protected override void OnKeyPress(KeyPressEventArgs e)
         //{
         //    if (txtSearch.Focused || txtCustomer.Focused || txtBarcode.Focused)
@@ -6047,15 +6343,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
         private async void ProcessBarcode(string code)
         {
             if (string.IsNullOrEmpty(code)) return;
-            string trimmed = code.TrimStart('0'), padded = code.PadLeft(13, '0');
-            if (!_barcodeMap.TryGetValue(code, out var prod))
-                if (!_barcodeMap.TryGetValue(padded, out prod))
-                    _barcodeMap.TryGetValue(trimmed, out prod);
-
-            if (prod != null) { await AddToCart(prod, 1); ShowStatus("Scanned: " + prod.Name, true); }
-            else ShowStatus("Barcode not found: " + code, false);
-
-            this.ActiveControl = null;
+            await EnqueueSearchEntryAsync(code);
         }
         // ── UOMs already used by this item's cart lines — mirrors getUOMOptionsForItem()
         //    in the React PO screen, which excludes UOMs already used on other lines. ──
@@ -9128,10 +9416,10 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
 
                 if (overStockItems.Count > 0 && !POSAPP.Printer.StockSettings.AllowOutOfStockSale)
                 {
-                    MessageBox.Show(
+                    ShowAlert("Insufficient Stock",
                         "The following items exceed available stock:\n\n" + string.Join("\n", overStockItems) +
                         "\n\nPlease adjust quantities before completing the sale.",
-                        "⛔ Insufficient Stock", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        AlertKind.Warning);
                     ShowStatus("⛔ Sale blocked — insufficient stock.", false);
                     return;
                 }
@@ -9157,9 +9445,9 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
 
                     if (_splitCash > 0 && !ShiftState.IsOpen)
                     {
-                        MessageBox.Show(
+                        ShowAlert("No Shift Open",
                             "No shift is open.\n\nOpen a shift via Float Entry (F8) before processing cash.",
-                            "⚠ No Shift Open", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                            AlertKind.Warning);
                         return;
                     }
                 }
@@ -9430,6 +9718,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             _resizeDebounce?.Stop();
             _resizeDebounce?.Dispose();
             _resizeDebounce = null;
+            CloseToast();
         }
         private void ShowReprintDialog()
         {
@@ -9897,13 +10186,15 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
         {
             if (lblStatus.IsDisposed) return;
             if (lblStatus.InvokeRequired)
-                lblStatus.BeginInvoke(new Action(() =>
-                {
-                    if (!lblStatus.IsDisposed)
-                    { lblStatus.Text = msg; lblStatus.ForeColor = ok ? TextGreen : AccRed; }
-                }));
-            else
-            { lblStatus.Text = msg; lblStatus.ForeColor = ok ? TextGreen : AccRed; }
+            {
+                lblStatus.BeginInvoke(new Action(() => ShowStatus(msg, ok)));
+                return;
+            }
+
+            lblStatus.Text = msg;
+            lblStatus.ForeColor = ok ? TextGreen : AccRed;
+
+            if (!ok) ShowToast(msg, isError: true);   // every warning/error pops up
         }
 
         // ══════════════════════════════════════════════════════════════════════
@@ -10036,6 +10327,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             _resizeDebounce?.Stop();
             _resizeDebounce?.Dispose();
             _resizeDebounce = null;
+            CloseToast();
         }
         // ══════════════════════════════════════════════════════════════════════
         //  SEARCH RESULTS — OWNER-DRAW (modern dark dropdown)
