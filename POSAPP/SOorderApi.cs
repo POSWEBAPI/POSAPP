@@ -461,7 +461,7 @@ namespace POSAPP.Payment
                 System.Diagnostics.Debug.WriteLine("GetSalesOrderByIdAsync failed: " + ex.Message);
                 return null;
             }
-        }
+        } 
 
         public static async Task<bool> DeleteSalesOrderAsync(int soId)
         {
