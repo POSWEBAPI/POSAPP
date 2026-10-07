@@ -318,7 +318,7 @@ namespace POSAPP
             lblShortcuts.Size = new Size(700, 20);
             lblShortcuts.Location = new Point(450, 20);
 
-            panelFooterBar.Controls.AddRange(new Control[] { btnTenderSale, btnCancelSale, lblShortcuts });
+            panelFooterBar.Controls.AddRange(new Control[] { btnTenderSale, btnCancelSale });
 
             // ══════════════════════════════════════════════════════════════════
             //  ROOT TABLE  22% | 48% | 30%
@@ -508,7 +508,7 @@ namespace POSAPP
 
             // ── Totals card — uses TableLayoutPanel so values are ALWAYS right-aligned ──
             panelTotalsCard.Dock = DockStyle.Top;
-            panelTotalsCard.Height = 184;
+            panelTotalsCard.Height = 196;
             panelTotalsCard.BackColor = Color.FromArgb(32, 35, 44);
             panelTotalsCard.Paint += new PaintEventHandler(PaintDarkCard);
             panelTotalsCard.Padding = new Padding(10, 8, 10, 8);
@@ -522,8 +522,8 @@ namespace POSAPP
                 RowCount = 7,   // subtotal, discount, tax, divider-row, grand
                 CellBorderStyle = TableLayoutPanelCellBorderStyle.None
             };
-            tblTotals.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 40F));  // label col
-            tblTotals.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 60F));  // value col  // value col  // subtotal, discount, tax, divider, unit prices, grand
+            tblTotals.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));       // label col grows to fit its text
+            tblTotals.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));  // value col takes the rest // value col  // value col  // subtotal, discount, tax, divider, unit prices, grand
             tblTotals.RowStyles.Add(new RowStyle(SizeType.Absolute, 26F));  // row 0: subtotal
             tblTotals.RowStyles.Add(new RowStyle(SizeType.Absolute, 26F));  // row 1: discount
             tblTotals.RowStyles.Add(new RowStyle(SizeType.Absolute, 26F));  // row 2: tax
@@ -596,15 +596,16 @@ namespace POSAPP
                 Font = new Font("Segoe UI", 10F, FontStyle.Bold),
                 ForeColor = Color.FromArgb(52, 211, 153),
                 BackColor = Color.Transparent,
+                AutoSize = true,              // lets the AutoSize column measure it
+                AutoEllipsis = false,
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
-                Margin = new Padding(2, 0, 0, 0)
+                Margin = new Padding(2, 0, 8, 0)
             };
-
             lblGrandTotal = new Label
             {
                 Text = "P 0.00",
-                Font = new Font("Segoe UI", 14F, FontStyle.Bold),
+                Font = new Font("Segoe UI", 13F, FontStyle.Bold),
                 ForeColor = Color.FromArgb(52, 211, 153),
                 BackColor = Color.Transparent,
                 Dock = DockStyle.Fill,

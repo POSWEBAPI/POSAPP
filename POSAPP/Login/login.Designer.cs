@@ -158,7 +158,7 @@ namespace POSAPP
 
             lblBrandTagline = new Label
             {
-                Text = "Smart  •  Efficient  •  Point of Sale",
+                Text = "",
                 Font = new Font("Segoe UI", 9F),
                 ForeColor = Color.FromArgb(96, 130, 210),
                 BackColor = Color.Transparent,

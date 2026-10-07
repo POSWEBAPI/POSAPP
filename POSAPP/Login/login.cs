@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Windows.Forms;
 
+
 namespace POSAPP
 {
     public partial class login : Form
@@ -17,7 +18,7 @@ namespace POSAPP
         private static readonly Color C_Success = Color.FromArgb(22, 163, 74);
         private static readonly Color C_Error = Color.FromArgb(220, 38, 38);
         private static readonly Color C_Warning = Color.FromArgb(217, 119, 6);
-
+        private bool _updateInProgress;
         private const int PIN_LENGTH = 5;
 
         // ── JSON options ─────────────────────────────────────────────────────
@@ -60,44 +61,68 @@ namespace POSAPP
         // ═════════════════════════════════════════════════════════════════════
         // LOAD
         // ═════════════════════════════════════════════════════════════════════
-        private void Form1_Load(object sender, EventArgs e)
+        private async void Form1_Load(object sender, EventArgs e)
         {
             LoadLogo();
             BuildStatusCard();
-            lblShiftInfo.Text = "Shift: Morning | Terminal ID: #01"; // adjust/wire from config as needed
+            lblShiftInfo.Text = $"Shift: Morning | Terminal ID: #01 | v{SimpleUpdater.Current}";
             btnMaximize_Click(null, null);
 
-            _ = Task.Run(() => { try { new SyncService().SyncAll(); } catch { } });
+            //await CheckForUpdateAsync();
 
-            // _ = CheckForUpdateAsync();
+            //if (!_updateInProgress)
+            //    _ = Task.Run(() => { try { new SyncService().SyncAll(); } catch { } });
         }
+
         private async Task CheckForUpdateAsync()
         {
+            Version newVersion;
             try
             {
-                var updater = new UpdateService();
-                var info = await updater.CheckForUpdateAsync();
-                if (info == null) return; // already on latest version, or check failed silently
-
-                var result = MessageBox.Show(
-                    $"Version {info.Version} is available.\n\n{info.ReleaseNotes}\n\nUpdate now?",
-                    "Update Available",
-                    info.Mandatory ? MessageBoxButtons.OK : MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Information);
-
-                if (info.Mandatory || result == DialogResult.Yes)
-                {
-                    ShowStatus("Downloading update...", StatusType.Loading);
-                    string zip = await updater.DownloadUpdateAsync(info);
-                    string staging = updater.ExtractUpdate(zip, info.Version);
-                    updater.LaunchUpdaterAndExit(staging);
-                }
+                ShowStatus("Checking for updates", StatusType.Loading);
+                newVersion = await SimpleUpdater.CheckAsync();
             }
             catch
             {
-                // Never let update logic crash the login screen.
+                HideStatus();      // offline or server down: allow normal login
+                return;
             }
-        }
+
+            if (newVersion == null) { HideStatus(); return; }
+
+            _updateInProgress = true;
+            SetLoginBusy(true);
+
+            while (true)
+            {
+                try
+                {
+                    ShowStatus($"Updating to v{newVersion}", StatusType.Loading);
+                    SimpleUpdater.OnProgress = p =>
+    ShowStatus($"Downloading v{newVersion} ({p}%)", StatusType.Loading);
+                    await SimpleUpdater.DownloadAndInstallAsync();
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine("Update failed: " + ex.Message);
+                    ShowStatus("Update failed", StatusType.Error);
+
+                    var r = MessageBox.Show(
+                        $"Version {newVersion} must be installed before you can log in.\n\n" +
+                        "The update failed. Check the internet connection and try again.",
+                        "Update Required",
+                        MessageBoxButtons.RetryCancel,
+                        MessageBoxIcon.Warning);
+
+                    if (r != DialogResult.Retry)
+                    {
+                        Application.Exit();
+                        return;
+                    }
+                }
+            }
+        } 
         private void LoadLogo()
         {
             string[] names = { "logo.png", "shripos.png", "ShriPOS.png", "logo.jpg", "logo.jpeg" };
@@ -289,6 +314,7 @@ namespace POSAPP
         // ═════════════════════════════════════════════════════════════════════
         private async void btnUnlock_Click(object sender, EventArgs e)
         {
+            if (_updateInProgress) return;
             if (string.IsNullOrWhiteSpace(_pin))
             {
                 ShowStatus("Enter PIN.", StatusType.Warning);
@@ -507,6 +533,7 @@ namespace POSAPP
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
+            if (_updateInProgress) return true;
             if (keyData == Keys.Enter) { btnUnlock_Click(null, null); return true; }
             if (keyData == Keys.Escape) { this.Close(); return true; }
             if (keyData == Keys.Back)

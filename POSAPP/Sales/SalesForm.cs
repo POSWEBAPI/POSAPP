@@ -424,6 +424,7 @@ namespace POSAPP
             BuildGrandTotalBigLabel();
             BuildStockReductionLabel();
             RepositionTitleButtons();
+            panelCentre.SizeChanged += (s, ev) => RepositionTitleButtons();
             panelLeft.Resize += (s, e) =>
             {
                 int fixedH = panelSearchCard.Height + panelDiscountCard.Height + 12; // margins
@@ -717,53 +718,7 @@ namespace POSAPP
             btnCharges.BackColor = _charges.Count == 0 ? Color.FromArgb(55, 60, 78)
                 : (_chargesAllocated ? AccGreen : AccOrange);
         }
-        //private void MoveSearchControlsIntoLeftPanel()
-        //{
-        //    // Detach from the (now-hidden) header
-        //    panelHeader.Controls.Remove(txtSearch);
-        //    panelHeader.Controls.Remove(txtBarcode);
-        //    panelHeader.Controls.Remove(lblSearchHeader);
-        //    panelHeader.Controls.Remove(lblBarcodeHeader);
-        //    panelHeader.Controls.Remove(lblSearchSep);
-        //    panelHeader.Controls.Remove(lblBarcodeSep);
-
-        //    // Detach lblStatus from wherever it currently lives
-        //    panelSearchCard.Controls.Remove(lblStatus);
-        //    panelSearchCard.Controls.Clear(); // wipe anything left over from the old single-row layout
-
-        //    panelSearchCard.Padding = new Padding(10, 8, 10, 8);
-
-        //    // Build three explicit row panels, each Dock=Top, added in reverse
-        //    // visual order (last docked-Top control added ends up at the TOP).
-        //    var rowStatus = new Panel { Dock = DockStyle.Top, Height = 22, BackColor = Color.Transparent };
-        //    lblStatus.Dock = DockStyle.Fill;
-        //    lblStatus.AutoSize = false;
-        //    lblStatus.TextAlign = ContentAlignment.MiddleLeft;
-        //    rowStatus.Controls.Add(lblStatus);
-
-        //    var rowBarcode = new Panel { Dock = DockStyle.Top, Height = 26, BackColor = Color.Transparent, Margin = new Padding(0, 4, 0, 0) };
-        //    txtBarcode.Dock = DockStyle.Fill;
-        //    txtBarcode.BorderStyle = BorderStyle.FixedSingle;
-        //    txtBarcode.Font = new Font("Consolas", 9F);
-        //    rowBarcode.Controls.Add(txtBarcode);
-
-        //    var rowSearch = new Panel { Dock = DockStyle.Top, Height = 26, BackColor = Color.Transparent, Margin = new Padding(0, 4, 0, 0) };
-        //    txtSearch.Dock = DockStyle.Fill;
-        //    txtSearch.BorderStyle = BorderStyle.FixedSingle;
-        //    txtSearch.Font = new Font("Segoe UI", 9F);
-        //    rowSearch.Controls.Add(txtSearch);
-
-        //    // Add in order: search (top), barcode (middle), status (bottom)
-        //    panelSearchCard.Controls.Add(rowStatus);
-        //    panelSearchCard.Controls.Add(rowBarcode);
-        //    panelSearchCard.Controls.Add(rowSearch);
-
-        //    // Panel auto-sizes to its docked children — no manual height math needed
-        //    panelSearchCard.Height =
-        //        panelSearchCard.Padding.Vertical
-        //        + rowSearch.Height + rowBarcode.Height + rowStatus.Height
-        //        + rowBarcode.Margin.Top + rowStatus.Margin.Top;
-        //}
+        
         private Dictionary<string, int> _nameToItemId = new(StringComparer.OrdinalIgnoreCase);
 
         private async Task LoadBankAccountsAsync()
@@ -2563,178 +2518,8 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
 
 
 
-        private void SyncD365ToSQLite(Dictionary<string, List<D365ProductDetail>> details)
-        {
-            //if (!System.IO.File.Exists(_dbPath)) return;
-            //try
-            //{
-            //    using var conn = new SQLiteConnection($"Data Source={_dbPath};Version=3;");
-            //    conn.Open();
-
-            //    // ── DDL ───────────────────────────────────────────────────────────────
-            //    using (var ddl = conn.CreateCommand())
-            //    {
-            //        ddl.CommandText = @"
-            //    CREATE TABLE IF NOT EXISTS D365Products (
-            //        ItemId       TEXT PRIMARY KEY,
-            //        NameAlias    TEXT,
-            //        InventSiteId TEXT
-            //    );
-            //    CREATE TABLE IF NOT EXISTS D365ProductDetails (
-            //        RowId                  INTEGER PRIMARY KEY AUTOINCREMENT,
-            //        DataAreaId             TEXT,
-            //        ItemId                 TEXT,
-            //        NameAlias              TEXT,
-            //        OnHandModifiedDateTime TEXT,
-            //        AvailPhysical          REAL,
-            //        InventLocationId       TEXT,
-            //        Amount                 REAL,
-            //        InventSiteId           TEXT,
-            //        WMSLocationId          TEXT,
-            //        AccountRelation        TEXT,
-            //        ODataEtag              TEXT,
-            //        UNIQUE(ItemId, InventLocationId, AccountRelation)
-            //    );
-            //    CREATE TABLE IF NOT EXISTS StoreStock (
-            //        PKStoreStockID INTEGER PRIMARY KEY AUTOINCREMENT,
-            //        ItemID         TEXT    NOT NULL,
-            //        StoreID        INTEGER NOT NULL DEFAULT 1,
-            //        OnHandQty      REAL    NOT NULL DEFAULT 0,
-            //        ReservedQty    REAL             DEFAULT 0,
-            //        LastSyncQty    REAL             DEFAULT 0,
-            //        UNIQUE(ItemID, StoreID)
-            //    );
-            //    CREATE INDEX IF NOT EXISTS IX_StoreStock_ItemStore
-            //        ON StoreStock(ItemID, StoreID);
-            //    CREATE TABLE IF NOT EXISTS POS_SyncControl (
-            //        SyncType         TEXT PRIMARY KEY,
-            //        LastSyncDateTime TEXT
-            //    );";
-            //        ddl.ExecuteNonQuery();
-            //    }
-
-            //    // ── Read existing etags to skip unchanged rows ────────────────────────
-            //    var existingEtags = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            //    using (var cmd = conn.CreateCommand())
-            //    {
-            //        cmd.CommandText =
-            //            "SELECT ItemId || '|' || IFNULL(InventLocationId,'') || '|' || IFNULL(AccountRelation,''), " +
-            //            "       ODataEtag " +
-            //            "FROM D365ProductDetails;";
-            //        using var r = cmd.ExecuteReader();
-            //        while (r.Read())
-            //            existingEtags[r.IsDBNull(0) ? "" : r.GetString(0)] =
-            //                            r.IsDBNull(1) ? "" : r.GetString(1);
-            //    }
-
-            //    using var tx = conn.BeginTransaction();
-            //    int upsertedDetails = 0, upsertedStock = 0;
-
-            //    foreach (var kvp in details)
-            //    {
-            //        string itemId = kvp.Key;
-            //        var rows = kvp.Value;
-            //        if (rows.Count == 0) continue;
-
-            //        // ── Master product ─────────────────────────────────────────────────
-            //        using (var cmd = conn.CreateCommand())
-            //        {
-            //            cmd.Transaction = tx;
-            //            cmd.CommandText = @"
-            //        INSERT INTO D365Products (ItemId, NameAlias, InventSiteId)
-            //        VALUES (@id, @name, @site)
-            //        ON CONFLICT(ItemId) DO UPDATE SET
-            //            NameAlias    = excluded.NameAlias,
-            //            InventSiteId = excluded.InventSiteId;";
-            //            cmd.Parameters.AddWithValue("@id", itemId);
-            //            cmd.Parameters.AddWithValue("@name", rows[0].NameAlias);
-            //            cmd.Parameters.AddWithValue("@site", rows[0].InventSiteId);
-            //            cmd.ExecuteNonQuery();
-            //        }
-
-            //        // ── Detail rows ────────────────────────────────────────────────────
-            //        foreach (var d in rows)
-            //        {
-            //            string key = $"{d.ItemId}|{d.InventLocationId}|{d.AccountRelation}";
-            //            if (!string.IsNullOrWhiteSpace(d.ODataEtag) &&
-            //                existingEtags.TryGetValue(key, out string ex) &&
-            //                ex == d.ODataEtag)
-            //                continue;
-
-            //            using var cmd = conn.CreateCommand();
-            //            cmd.Transaction = tx;
-            //            cmd.CommandText = @"
-            //        INSERT INTO D365ProductDetails
-            //            (DataAreaId, ItemId, NameAlias, OnHandModifiedDateTime,
-            //             AvailPhysical, InventLocationId, Amount,
-            //             InventSiteId, WMSLocationId, AccountRelation, ODataEtag)
-            //        VALUES
-            //            (@da,@id,@name,@ohd,@avail,@loc,@amt,@site,@wms,@acct,@etag)
-            //        ON CONFLICT(ItemId, InventLocationId, AccountRelation) DO UPDATE SET
-            //            NameAlias              = excluded.NameAlias,
-            //            OnHandModifiedDateTime = excluded.OnHandModifiedDateTime,
-            //            AvailPhysical          = excluded.AvailPhysical,
-            //            Amount                 = excluded.Amount,
-            //            InventSiteId           = excluded.InventSiteId,
-            //            WMSLocationId          = excluded.WMSLocationId,
-            //            ODataEtag              = excluded.ODataEtag;";
-            //            cmd.Parameters.AddWithValue("@da", d.DataAreaId);
-            //            cmd.Parameters.AddWithValue("@id", d.ItemId);
-            //            cmd.Parameters.AddWithValue("@name", d.NameAlias);
-            //            cmd.Parameters.AddWithValue("@ohd", d.OnHandModifiedDateTime);
-            //            cmd.Parameters.AddWithValue("@avail", d.AvailPhysical);
-            //            cmd.Parameters.AddWithValue("@loc", d.InventLocationId);
-            //            cmd.Parameters.AddWithValue("@amt", d.Amount);
-            //            cmd.Parameters.AddWithValue("@site", d.InventSiteId);
-            //            cmd.Parameters.AddWithValue("@wms", d.WMSLocationId);
-            //            cmd.Parameters.AddWithValue("@acct", d.AccountRelation);
-            //            cmd.Parameters.AddWithValue("@etag", d.ODataEtag);
-            //            cmd.ExecuteNonQuery();
-            //            upsertedDetails++;
-            //        }
-
-            //        // ── StoreStock — sum AvailPhysical across all locations ───────────
-            //        //   OnHandQty  = total available from D365 (refreshed on every sync)
-            //        //   LastSyncQty = same snapshot — baseline for drift comparison
-            //        //   ReservedQty is intentionally NOT reset; it accumulates from sales
-            //        decimal totalAvail = rows.Sum(d => d.AvailPhysical);
-
-            //        using (var cmd = conn.CreateCommand())
-            //        {
-            //            cmd.Transaction = tx;
-            //            cmd.CommandText = @"
-            //        INSERT INTO StoreStock (ItemID, StoreID, OnHandQty, LastSyncQty)
-            //        VALUES (@item, @store, @qty, @qty)
-            //        ON CONFLICT(ItemID, StoreID) DO UPDATE SET
-            //            OnHandQty   = excluded.OnHandQty,
-            //            LastSyncQty = excluded.LastSyncQty;";
-            //            //  NOTE: ReservedQty is excluded from the UPDATE intentionally —
-            //            //  we never want a D365 sync to wipe out the local sales tally.
-            //            cmd.Parameters.AddWithValue("@item", itemId);
-            //            cmd.Parameters.AddWithValue("@store", _storeId);
-            //            cmd.Parameters.AddWithValue("@qty", (double)totalAvail);
-            //            cmd.ExecuteNonQuery();
-            //            upsertedStock++;
-            //        }
-            //    }
-
-            //    UpsertSyncControl(conn, tx as SQLiteTransaction, "SalesForm");
-            //    tx.Commit();
-            //    Debug.WriteLine(
-            //        $"SyncD365ToSQLite: {upsertedDetails} detail rows, {upsertedStock} stock rows upserted.");
-            //}
-            //catch (Exception ex)
-            //{
-            //    Debug.WriteLine("SyncD365ToSQLite: " + ex.Message);
-            //}
-        }
-        // ══════════════════════════════════════════════════════════════════════
-        //  STOCK — LIVE SINGLE-ITEM CHECK  (GET /api/stock/item?itemId=X&companyId=Y)
-        // ══════════════════════════════════════════════════════════════════════
-
-        // ══════════════════════════════════════════════════════════════════════
-        //  STOCK — LOAD FULL CACHE FROM API  (GET /api/stock?companyId=X)
-        // ══════════════════════════════════════════════════════════════════════
+        
+         
         private async Task LoadStockCacheAsync()
         {
             try
@@ -3178,405 +2963,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             return (0m, 0m, false);
         }
 
-
-
-
-
-        // ══════════════════════════════════════════════════════════════════════
-        //  PRODUCT LOADING — D365 / API TOGGLE
-        // ══════════════════════════════════════════════════════════════════════
-        // ─────────────────────────────────────────────────────────────────────────────
-        //  FULL REPLACEMENT — LoadProductsFromD365Async + helpers
-        //
-        //  Sync logic:
-        //    • First run  (no POS_SyncControl row)  → insert ALL rows
-        //    • Subsequent → only rows whose OnHandModifiedDateTime (UTC) > lastSync (UTC)
-        //    • Rows with blank OnHandModifiedDateTime → always upsert (safe fallback)
-        //    • POS_SyncControl stores time in "dd-MM-yyyy HH.mm" (local) for display,
-        //      but comparison is done in UTC to match the API's timestamps
-        // ─────────────────────────────────────────────────────────────────────────────
-
-        //private async Task LoadProductsFromD365Async()
-
-        //{
-
-        //    //if (!_useD365)
-
-        //    //{
-
-        //    //    SetD365Mode(false);
-
-        //    //    await LoadProductsFromApiAsync();
-
-        //    //    return;
-
-        //    //}
-
-        //    try
-
-        //    {
-
-        //        ShowStatus("Loading products from D365...", true);
-
-        //        using var http = new System.Net.Http.HttpClient();
-
-        //        http.Timeout = TimeSpan.FromSeconds(60);
-
-        //        string apiUrl = $"{ApiBaseUrl}/api/Product";
-
-        //        var resp = await http.GetAsync(apiUrl).ConfigureAwait(false);
-
-        //        if (!resp.IsSuccessStatusCode)
-
-        //        {
-
-        //            string err = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
-
-        //            ShowStatus($"API error {(int)resp.StatusCode}: {err}", false);
-
-        //            await LoadProductsFromD365SQLiteAsync();
-
-        //            SetD365Mode(true);
-
-        //            return;
-
-        //        }
-
-        //        string json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
-
-        //        JsonElement root;
-
-        //        try { root = JsonSerializer.Deserialize<JsonElement>(json); }
-
-        //        catch
-
-        //        {
-
-        //            ShowStatus("D365 response parse error.", false);
-
-        //            await LoadProductsFromD365SQLiteAsync();
-
-        //            SetD365Mode(true);
-
-        //            return;
-
-        //        }
-
-        //        JsonElement doc = root;
-
-        //        if (root.ValueKind == JsonValueKind.String)
-
-        //        {
-
-        //            string inner = root.GetString() ?? "";
-
-        //            doc = JsonSerializer.Deserialize<JsonElement>(inner);
-
-        //        }
-
-        //        if (!doc.TryGetProperty("value", out var values))
-
-        //        {
-
-        //            ShowStatus("D365 returned no products.", false);
-
-        //            await LoadProductsFromD365SQLiteAsync();
-
-        //            SetD365Mode(true);
-
-        //            return;
-
-        //        }
-
-        //        // ── Parse JSON ─────────────────────────────────────────────────────
-
-        //        var localMap = new Dictionary<string, Product>(StringComparer.OrdinalIgnoreCase);
-
-        //        var localCatalog = new List<Product>();
-
-        //        var localDetailMap = new Dictionary<string, List<D365ProductDetail>>(StringComparer.OrdinalIgnoreCase);
-
-        //        foreach (var item in values.EnumerateArray())
-
-        //        {
-
-        //            string dataArea = item.TryGetProperty("dataAreaId", out var da) ? da.GetString() ?? "" : "";
-
-        //            string itemId = item.TryGetProperty("ItemId", out var id) ? id.GetString() ?? "" : "";
-
-        //            string name = item.TryGetProperty("NameAlias", out var na) ? na.GetString() ?? "" : "";
-
-        //            string site = item.TryGetProperty("InventSiteId", out var si) ? si.GetString() ?? "" : "";
-
-        //            string location = item.TryGetProperty("InventLocationId", out var lo) ? lo.GetString() ?? "" : "";
-
-        //            string wms = item.TryGetProperty("wMSLocationId", out var wm) ? wm.GetString() ?? "" : "";
-
-        //            string acct = item.TryGetProperty("AccountRelation", out var ar) ? ar.GetString() ?? "" : "";
-
-        //            string etag = item.TryGetProperty("@odata.etag", out var et) ? et.GetString() ?? "" : "";
-
-        //            string onHand = item.TryGetProperty("OnHandModifiedDateTime", out var oh) ? oh.GetString() ?? "" : "";
-
-        //            decimal price = 0m;
-
-        //            if (item.TryGetProperty("Amount", out var amt))
-
-        //                price = amt.ValueKind == JsonValueKind.Number ? amt.GetDecimal() : 0m;
-
-        //            decimal avail = 0m;
-
-        //            if (item.TryGetProperty("AvailPhysical", out var av))
-
-        //                avail = av.ValueKind == JsonValueKind.Number ? av.GetDecimal() : 0m;
-
-        //            if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(itemId)) continue;
-
-        //            // One Product per ItemId — first/lowest-price row wins
-
-        //            if (!localMap.ContainsKey(itemId))
-
-        //            {
-
-        //                var prod = new Product { Name = name, Price = price, Barcode = itemId, Category = site };
-
-        //                string padded = itemId.PadLeft(13, '0');
-
-        //                localCatalog.Add(prod);
-
-        //                localMap[itemId] = prod;
-
-        //                localMap[padded] = prod;
-
-        //            }
-
-        //            if (!localDetailMap.ContainsKey(itemId))
-
-        //                localDetailMap[itemId] = new List<D365ProductDetail>();
-
-        //            localDetailMap[itemId].Add(new D365ProductDetail
-
-        //            {
-
-        //                DataAreaId = dataArea,
-
-        //                ItemId = itemId,
-
-        //                NameAlias = name,
-
-        //                OnHandModifiedDateTime = onHand,
-
-        //                AvailPhysical = avail,
-
-        //                InventLocationId = location,
-
-        //                Amount = price,
-
-        //                InventSiteId = site,
-
-        //                WMSLocationId = wms,
-
-        //                AccountRelation = acct,
-
-        //                ODataEtag = etag
-
-        //            });
-
-        //        }
-
-        //        // ── Commit to in-memory state ──────────────────────────────────────
-
-        //        _barcodeMap = localMap;
-
-        //        _catalog = localCatalog;
-
-        //        _d365Details = localDetailMap;
-
-        //        // ── Persist to ShriPOS.db in background (fire-and-forget) ──────────
-
-        //        //   _ = Task.Run(() => SyncD365ToShriPOSDbAsync(_d365Details));
-
-        //        this.BeginInvoke(new Action(() =>
-
-        //        {
-
-        //            BuildAutocomplete();
-
-        //            BuildHotItems();
-
-        //            ShowStatus($"✓ Loaded {localCatalog.Count} products from D365.", true);
-
-        //            SetD365Mode(true);
-
-        //        }));
-
-        //    }
-
-        //    catch (Exception ex)
-
-        //    {
-
-        //        ShowStatus("D365 load failed: " + ex.Message, false);
-
-        //        Debug.WriteLine("LoadProductsFromD365Async: " + ex);
-
-        //        await LoadProductsFromD365SQLiteAsync();
-
-        //        SetD365Mode(true);
-
-        //    }
-
-        //}
-
-        //// ─────────────────────────────────────────────────────────────────────────────
-        ////  HELPER: read LastSyncDateTime as UTC DateTime.
-        ////
-        ////  Stored format in DB : "dd-MM-yyyy HH.mm"  (local time, for display)
-        ////  Returned             : UTC DateTime        (for comparison with API timestamps)
-        ////  Returns DateTime.MinValue (UTC) if no record found yet.
-        //// ─────────────────────────────────────────────────────────────────────────────
-
-
-        //private async Task LoadProductsFromD365SQLiteAsync()
-        //{
-        //    try
-        //    {
-        //        ShowStatus("Loading products from local cache…", true);
-
-        //        if (!System.IO.File.Exists(_dbPath))
-        //        {
-        //            ShowStatus($"Database not found: {_dbPath}", false);
-        //            return;
-        //        }
-
-        //        var localMap = new Dictionary<string, Product>(StringComparer.OrdinalIgnoreCase);
-        //        var localCatalog = new List<Product>();
-        //        var localDetailMap = new Dictionary<string, List<D365ProductDetail>>(StringComparer.OrdinalIgnoreCase);
-
-        //        using var conn = new SQLiteConnection($"Data Source={_dbPath};Version=3;Foreign Keys=True;");
-        //        await conn.OpenAsync().ConfigureAwait(false);
-
-        //        // Guard: tables may not exist on first run
-        //        using (var chk = conn.CreateCommand())
-        //        {
-        //            chk.CommandText =
-        //                "SELECT COUNT(*) FROM sqlite_master " +
-        //                "WHERE type='table' AND name='D365Products';";
-        //            long exists = (long)(await chk.ExecuteScalarAsync().ConfigureAwait(false) ?? 0L);
-        //            if (exists == 0)
-        //            {
-        //                ShowStatus("No local product cache — waiting for API sync…", true);
-        //                // Still set D365 mode so the button label is correct
-        //                _isD365Mode = true;
-        //                this.BeginInvoke(new Action(() => SetD365Mode(true)));
-        //                return;
-        //            }
-        //        }
-
-        //        // Load master products
-        //        using (var cmd = conn.CreateCommand())
-        //        {
-        //            cmd.CommandText =
-        //                "SELECT ItemId, NameAlias, InventSiteId " +
-        //                "FROM D365Products ORDER BY NameAlias;";
-
-        //            using var rdr = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
-        //            while (await rdr.ReadAsync().ConfigureAwait(false))
-        //            {
-        //                string itemId = rdr.IsDBNull(0) ? "" : Convert.ToString(rdr.GetValue(0)) ?? "";
-        //                string name = rdr.IsDBNull(1) ? "" : Convert.ToString(rdr.GetValue(1)) ?? "";
-        //                string site = rdr.IsDBNull(2) ? "" : Convert.ToString(rdr.GetValue(2)) ?? "";
-
-        //                if (string.IsNullOrWhiteSpace(itemId)) continue;
-
-        //                var prod = new Product { Name = name, Barcode = itemId, Category = site, Price = 0m };
-        //                string padded = itemId.PadLeft(13, '0');
-        //                localCatalog.Add(prod);
-        //                localMap[itemId] = prod;
-        //                localMap[padded] = prod;
-        //                localDetailMap[itemId] = new List<D365ProductDetail>();
-        //            }
-        //        }
-
-        //        if (localCatalog.Count == 0)
-        //        {
-        //            ShowStatus("Local cache is empty — waiting for API sync…", true);
-        //            _isD365Mode = true;
-        //            this.BeginInvoke(new Action(() => SetD365Mode(true)));
-        //            return;
-        //        }
-
-        //        // Load detail rows (ORDER BY Amount → lowest price first)
-        //        using (var cmd = conn.CreateCommand())
-        //        {
-        //            cmd.CommandText = @"
-        //        SELECT DataAreaId, ItemId, NameAlias, OnHandModifiedDateTime,
-        //               AvailPhysical, InventLocationId, Amount,
-        //               InventSiteId, WMSLocationId, AccountRelation, ODataEtag
-        //        FROM   D365ProductDetails
-        //        ORDER  BY ItemId, Amount;";
-
-        //            using var rdr = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
-        //            while (await rdr.ReadAsync().ConfigureAwait(false))
-        //            {
-        //                string itemId = rdr.IsDBNull(1) ? "" : Convert.ToString(rdr.GetValue(1)) ?? "";
-        //                if (!localDetailMap.ContainsKey(itemId)) continue;
-
-        //                decimal availPhysical = 0m, amount = 0m;
-        //                try { if (!rdr.IsDBNull(4)) availPhysical = Convert.ToDecimal(rdr.GetValue(4)); } catch { }
-        //                try { if (!rdr.IsDBNull(6)) amount = Convert.ToDecimal(rdr.GetValue(6)); } catch { }
-
-        //                var detail = new D365ProductDetail
-        //                {
-        //                    DataAreaId = rdr.IsDBNull(0) ? "" : Convert.ToString(rdr.GetValue(0)) ?? "",
-        //                    ItemId = itemId,
-        //                    NameAlias = rdr.IsDBNull(2) ? "" : Convert.ToString(rdr.GetValue(2)) ?? "",
-        //                    OnHandModifiedDateTime = rdr.IsDBNull(3) ? "" : Convert.ToString(rdr.GetValue(3)) ?? "",
-        //                    AvailPhysical = availPhysical,
-        //                    InventLocationId = rdr.IsDBNull(5) ? "" : Convert.ToString(rdr.GetValue(5)) ?? "",
-        //                    Amount = amount,
-        //                    InventSiteId = rdr.IsDBNull(7) ? "" : Convert.ToString(rdr.GetValue(7)) ?? "",
-        //                    WMSLocationId = rdr.IsDBNull(8) ? "" : Convert.ToString(rdr.GetValue(8)) ?? "",
-        //                    AccountRelation = rdr.IsDBNull(9) ? "" : Convert.ToString(rdr.GetValue(9)) ?? "",
-        //                    ODataEtag = rdr.IsDBNull(10) ? "" : Convert.ToString(rdr.GetValue(10)) ?? "",
-        //                };
-
-        //                localDetailMap[itemId].Add(detail);
-
-        //                // First row (lowest price) sets the Product.Price
-        //                if (localMap.TryGetValue(itemId, out var prod) && prod.Price == 0m)
-        //                    prod.Price = detail.Amount;
-        //            }
-        //        }
-
-        //        // Commit to in-memory state on the background thread — safe for reads,
-        //        // UI thread only reads these after BeginInvoke fires.
-        //        _barcodeMap = localMap;
-        //        _catalog = localCatalog;
-        //        _d365Details = localDetailMap;
-
-        //        // ── KEY FIX: set the mode flag HERE (background thread), before the
-        //        //    UI dispatch, so that if the user clicks the Save button in the
-        //        //    tiny window between this line and BeginInvoke executing, the flag
-        //        //    is already correct and they won't see "Insufficient balance". ────
-        //        _isD365Mode = true;
-        //        _useD365 = true;
-
-        //        // Update UI controls on the UI thread
-        //        this.BeginInvoke(new Action(() =>
-        //        {
-        //            BuildAutocomplete();
-        //            BuildHotItems();
-        //            SetD365Mode(true);    // refreshes button label / status text
-        //            ShowStatus($"✓ {localCatalog.Count} products loaded.", true);
-        //        }));
-        //    }
-        //    catch (Exception ex)
-        //    {
-        //        ShowStatus("Cache load failed: " + ex.Message, false);
-        //        Debug.WriteLine("LoadProductsFromD365SQLiteAsync: " + ex);
-        //    }
-        //}
+ 
         private async Task LoadProductsFromD365Async()
         {
             try
@@ -3867,20 +3254,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             cmd.Parameters.AddWithValue("@dt", formatted);
             cmd.ExecuteNonQuery();
         }
-
-
-        // ══════════════════════════════════════════════════════════════════════
-        //  D365 → ShriPOS.db SYNC
-        //  Writes into D365Products + D365ProductDetails (created by
-        //  DatabaseInitializer).  Skips rows whose OnHandModifiedDateTime
-        //  hasn't changed since last sync.
-        // ══════════════════════════════════════════════════════════════════════
-
-        // ══════════════════════════════════════════════════════════════════════
-        //  LOAD D365 PRODUCTS FROM ShriPOS.db  (offline / API-unreachable fallback)
-        //  Reads D365Products + D365ProductDetails — written by SyncD365ToShriPOSDbAsync
-        //  or by SyncService.SyncD365ProductsAsync.
-        // ══════════════════════════════════════════════════════════════════════
+         
 
 
         private void SetD365Mode(bool d365)
@@ -3921,49 +3295,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             }
             return null;
         }
-        // ── In SetPendingPaymentMode() — show and enable the button ────────
-        private void SetPendingPaymentMode()
-        {
-            if (lblSplitBalance != null)
-                lblSplitBalance.Visible = false;
-
-            // Customer dropdown only shows during pending-invoice payment collection
-            if (_cmbCustomer != null)
-            {
-                _cmbCustomer.Visible = true;
-                _cmbCustomer.Enabled = false;   // locked — customer was already set when SO was created
-            }
-
-            if (_searchWrapper != null)
-            {
-                _searchWrapper.Enabled = false;
-                _searchWrapper.BackColor = Color.FromArgb(28, 32, 40);
-            }
-            if (_barcodeWrapper != null)
-            {
-                _barcodeWrapper.Enabled = false;
-                _barcodeWrapper.BackColor = Color.FromArgb(28, 32, 40);
-            }
-
-            txtSearch.Enabled = false;
-            //txtBarcode.Enabled = false;
-            panelHotItems.Enabled = false;
-            panelHotItems.BackColor = Color.FromArgb(28, 32, 40);
-            if (nudDiscount != null) nudDiscount.Enabled = false;
-
-            LockCartRows();
-            ShowPendingBanner();
-
-            if (btnTenderSale != null)
-            {
-                btnTenderSale.Text = "✅  Tender Sale  (F1)";
-                btnTenderSale.BackColor = Color.FromArgb(34, 197, 94);
-                btnTenderSale.Visible = true;
-                btnTenderSale.Enabled = true;
-            }
-
-            ShowStatus("📋 Pending invoice — collect Cash / Card / Bank Transfer.", true);
-        }
+     
 
         private void LockCartRows()
         {
@@ -3981,55 +3313,8 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             }
         }
 
-        private Label _pendingBanner;
-        private void ShowPendingBanner()
-        {
-            if (_pendingBanner != null && !_pendingBanner.IsDisposed)
-                _pendingBanner.Dispose();
-
-            _pendingBanner = new Label
-            {
-                Text = "📋  PENDING INVOICE — Payment Only Mode",
-                Font = new Font("Segoe UI", 9F, FontStyle.Bold),
-                ForeColor = Color.FromArgb(251, 146, 60),
-                BackColor = Color.FromArgb(50, 38, 18),
-                AutoSize = false,
-                Size = new Size(panelCartItems.Width - 4, 28),
-                Location = new Point(2, 0),
-                TextAlign = ContentAlignment.MiddleCenter,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
-            };
-
-            // Insert at top of cart panel (shift existing rows down)
-            foreach (Control c in panelCartItems.Controls)
-                c.Location = new Point(c.Left, c.Top + 30);
-
-            panelCartItems.Controls.Add(_pendingBanner);
-            _pendingBanner.BringToFront();
-        }
-
-        // ══════════════════════════════════════════════════════════════════════
-        //  PENDING INVOICE — SAVE
-        // ══════════════════════════════════════════════════════════════════════
-
-        /// <summary>
-        /// Serializes the current cart and saves it as an Unpaid pending invoice.
-        /// Call this from a "Save / Hold" button.
-        /// </summary>
-
-
-
-        // ══════════════════════════════════════════════════════════════════════
-        //  PENDING INVOICE — RESTORE INTO CART
-        // ══════════════════════════════════════════════════════════════════════
-
-        /// <summary>
-        /// Restores a saved pending invoice back into the cart.
-        /// Called from PendingInvoicesForm when the cashier clicks "Open & Pay".
-        /// </summary> 
-        // ══════════════════════════════════════════════════════════════════════
-        //  FLOAT CASH
-        // ══════════════════════════════════════════════════════════════════════
+      
+         
         private void BuildFloatFooterLabel()
         {
             lblFloatDisplay = new Label
@@ -4099,15 +3384,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             fm.FormClosed += (s, e) => RefreshFloatLabel();
             fm.Show(this);
         }
-
-        // ══════════════════════════════════════════════════════════════════════
-        //  FOOTER BUTTONS POSITIONING
-        // ══════════════════════════════════════════════════════════════════════
-        // ═══════════════════════════════════════════════════════════════════════════
-        //  REPLACE the existing PositionFooterButtons() method with this version
-        // ═══════════════════════════════════════════════════════════════════════════
-
-        // REPLACE entire PositionFooterButtons():
+ 
         private void PositionFooterButtons()
         {
             if (panelFooterBar == null) return;
@@ -4163,6 +3440,9 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 btnDayEnd.Size = new Size(130, btnH);
                 btnDayEnd.Location = new Point(rx - 130, btnY);
             }
+            btnCharges?.BringToFront();
+            btnPrintLast?.BringToFront();
+            lblFloatDisplay?.BringToFront();
         }
         private void ShowChargesDialog()
         {
@@ -4456,89 +3736,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             _onlineCache = IsOnline();
             _onlineChecked = DateTime.UtcNow;
             return _onlineCache.Value;
-        }
-
-        // ══════════════════════════════════════════════════════════════════════
-        //  SETTINGS / CURRENCY
-        // ══════════════════════════════════════════════════════════════════════
-        //private async Task LoadCompanySettingsAsync()
-        //{
-        //    try
-        //    {
-        //        if (GetOnline())
-        //        {
-        //            try
-        //            {
-        //                var api = new ApiService();
-        //                string ep = _companyId > 0 ? $"api/Currency/{_companyId}" : "api/Currency";
-        //                string json = await api.GetAsync(ep).ConfigureAwait(false);
-        //                if (!string.IsNullOrEmpty(json))
-        //                {
-        //                    var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-        //                    var currencies = JsonSerializer.Deserialize<List<CurrencyDto>>(json, opts);
-        //                    if (currencies?.Count > 0)
-        //                    {
-        //                        var c = currencies[0];
-        //                        if (!string.IsNullOrWhiteSpace(c.CurrencySymbol))
-        //                        {
-        //                            _currencySymbol = c.CurrencySymbol.Trim();
-        //                            _currencyId = c.CurrencyID;
-        //                        }
-        //                    }
-        //                }
-        //            }
-        //            catch (Exception ex) { Debug.WriteLine("API Currency: " + ex.Message); }
-        //        }
-        //        else
-        //        {
-        //            await LoadCurrencyFromSQLite().ConfigureAwait(false);
-        //            this.BeginInvoke(new Action(RefreshAllCurrencyLabels));
-        //        }
-        //    }
-        //    catch (Exception ex) { Debug.WriteLine("LoadCompanySettingsAsync: " + ex.Message); }
-        //}
-
-        //private async Task LoadCurrencyFromSQLite()
-        //{
-        //    if (!System.IO.File.Exists(_dbPath)) return;
-        //    try
-        //    {
-        //        await Task.Run(() =>
-        //        {
-        //            using var conn = new SQLiteConnection($"Data Source={_dbPath};Version=3;");
-        //            conn.Open();
-        //            const string sql = @"
-        //                SELECT CurrencyID, CurrencySymbol
-        //                FROM CurrencyMaster
-        //                WHERE CompanyID = @CompanyID LIMIT 1;";
-        //            using var cmd = new SQLiteCommand(sql, conn);
-        //            cmd.Parameters.AddWithValue("@CompanyID", _companyId);
-        //            using var r = cmd.ExecuteReader();
-        //            if (r.Read())
-        //            {
-        //                _currencyId = Convert.ToInt32(r["CurrencyID"]);
-        //                string sym = r["CurrencySymbol"]?.ToString()?.Trim();
-        //                if (!string.IsNullOrWhiteSpace(sym)) _currencySymbol = sym;
-        //            }
-        //        }).ConfigureAwait(false);
-        //    }
-        //    catch (Exception ex) { Debug.WriteLine("LoadCurrencyFromSQLite: " + ex.Message); }
-        //}
-
-        //private void LoadCompanyInfo()
-        //{
-        //    _companyName = "Radical Investment Pty Ltd";
-        //    _companyAddress = "FLO-TEK Pipes & Irrigation, PO Box 10723, Lobatse Botswana, BWA";
-        //    _companyPhone = "";
-        //    _companyVat = "BW00000724614-00-05-17";
-        //    _companyWebsite = "www.flotekafrica.com";
-        //    _salesOfficeInfo =
-        //        "Gaborone Sales office|Phone: +267 3972001/3/4|Fax: +267 3872014" +
-        //        "||" +
-        //        "Phakalane Sales Office|Phone: +267 3972001|Fax: +267 3872014" +
-        //        "||" +
-        //        "Francistown Sales office|Phone: +267 2410248|Fax: +267 2410249";
-        //}
+        } 
 
         private void LoadCompanyInfo()
         {
@@ -4908,7 +4106,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 Location = new Point(wrapX, wrapY),
                 Size = new Size(wrapW, wrapH),
                 Cursor = Cursors.IBeam,
-                Anchor = tb.Anchor
+                Anchor = AnchorStyles.Top | AnchorStyles.Left
             };
             wp.Region = MakeRoundedRegion(wp.Size, 8);
 
@@ -5341,9 +4539,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             }
 
             if (prod == null) return;
-
-            if (_isD365Mode && _d365Details.ContainsKey(prod.Barcode))
-                ShowProductDetailPopup(prod);
+ 
             else if (prod.AvailableUOMs != null && prod.AvailableUOMs.Count > 1)
             {
                 var picked = await ShowUomQtyPicker(prod);
@@ -5662,9 +4858,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
 
             ClearSearchBox();
 
-            if (_isD365Mode && _d365Details.ContainsKey(prod.Barcode))
-                ShowProductDetailPopup(prod);
-            else if (prod.AvailableUOMs != null && prod.AvailableUOMs.Count > 1)
+             if (prod.AvailableUOMs != null && prod.AvailableUOMs.Count > 1)
             {
                 var picked = await ShowUomQtyPicker(prod);
                 if (picked.HasValue)
@@ -5674,588 +4868,8 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 await AddToCart(prod, 1);
 
             FocusSearchBox();   // instead of ActiveControl = null
-        }
-        private async Task<bool> ShowPriceGroupAuthDialogAsync(Form owner, string newGroup, decimal newPrice)
-        {
-            bool result = false;
-
-            var dlg = new Form
-            {
-                FormBorderStyle = FormBorderStyle.None,
-                StartPosition = FormStartPosition.CenterParent,
-                BackColor = Color.FromArgb(28, 32, 42),
-                ClientSize = new Size(420, 310),
-                KeyPreview = true,
-                ShowInTaskbar = false
-            };
-            dlg.Region = MakeRoundedRegion(dlg.Size, 12);
-
-            // ── Header ─────────────────────────────────────────────────────────────
-            var pnlHead = new Panel
-            {
-                BackColor = Color.FromArgb(42, 46, 58),
-                Size = new Size(420, 50),
-                Location = Point.Empty
-            };
-            pnlHead.Controls.Add(new Label
-            {
-                Text = "🔒  Supervisor Authorisation Required",
-                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
-                ForeColor = TextWhite,
-                BackColor = Color.Transparent,
-                AutoSize = false,
-                Size = new Size(420, 50),
-                Location = new Point(10, 0),
-                TextAlign = ContentAlignment.MiddleLeft
-            });
-            dlg.Controls.Add(pnlHead);
-
-            // ── Info line ─────────────────────────────────────────────────────────
-            dlg.Controls.Add(new Label
-            {
-                Text = $"Changing price group to:  \"{newGroup}\"  →  {Fmt(newPrice)}",
-                Font = new Font("Segoe UI", 9F),
-                ForeColor = AccOrange,
-                BackColor = Color.Transparent,
-                AutoSize = false,
-                Size = new Size(380, 24),
-                Location = new Point(20, 60),
-                TextAlign = ContentAlignment.MiddleLeft
-            });
-
-            // ── Username ──────────────────────────────────────────────────────────
-            dlg.Controls.Add(new Label
-            {
-                Text = "Username",
-                Font = new Font("Segoe UI", 8.5F),
-                ForeColor = TextMuted,
-                BackColor = Color.Transparent,
-                AutoSize = true,
-                Location = new Point(20, 96)
-            });
-            var txtUser = new TextBox
-            {
-                Font = new Font("Segoe UI", 10.5F),
-                ForeColor = TextWhite,
-                BackColor = Color.FromArgb(38, 42, 54),
-                BorderStyle = BorderStyle.FixedSingle,
-                Size = new Size(380, 30),
-                Location = new Point(20, 116)
-            };
-            dlg.Controls.Add(txtUser);
-
-            // ── Password ──────────────────────────────────────────────────────────
-            dlg.Controls.Add(new Label
-            {
-                Text = "Password",
-                Font = new Font("Segoe UI", 8.5F),
-                ForeColor = TextMuted,
-                BackColor = Color.Transparent,
-                AutoSize = true,
-                Location = new Point(20, 156)
-            });
-            var txtPass = new TextBox
-            {
-                Font = new Font("Segoe UI", 10.5F),
-                ForeColor = TextWhite,
-                BackColor = Color.FromArgb(38, 42, 54),
-                BorderStyle = BorderStyle.FixedSingle,
-                Size = new Size(380, 30),
-                Location = new Point(20, 176),
-                UseSystemPasswordChar = true
-            };
-            dlg.Controls.Add(txtPass);
-
-            // ── Status label ──────────────────────────────────────────────────────
-            var lblStatus2 = new Label
-            {
-                Font = new Font("Segoe UI", 8.5F, FontStyle.Italic),
-                ForeColor = AccRed,
-                BackColor = Color.Transparent,
-                AutoSize = false,
-                Size = new Size(380, 20),
-                Location = new Point(20, 214)
-            };
-            dlg.Controls.Add(lblStatus2);
-
-            // ── Authorise button ──────────────────────────────────────────────────
-            var btnAuth = new Button
-            {
-                Text = "✓  Authorise",
-                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
-                ForeColor = Color.White,
-                BackColor = AccGreen,
-                FlatStyle = FlatStyle.Flat,
-                Size = new Size(200, 40),
-                Location = new Point(20, 244),
-                Cursor = Cursors.Hand
-            };
-            btnAuth.FlatAppearance.BorderSize = 0;
-
-            // ── Cancel button ─────────────────────────────────────────────────────
-            var btnCancel = new Button
-            {
-                Text = "Cancel",
-                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
-                ForeColor = TextMuted,
-                BackColor = Color.FromArgb(44, 48, 60),
-                FlatStyle = FlatStyle.Flat,
-                Size = new Size(170, 40),
-                Location = new Point(230, 244),
-                Cursor = Cursors.Hand
-            };
-            btnCancel.FlatAppearance.BorderSize = 0;
-            btnCancel.Click += (s, ev) => dlg.Close();
-
-            // ── Auth logic — identical to ShowDeleteAuthDialog ────────────────────
-            async void DoAuth()
-            {
-                string username = txtUser.Text.Trim();
-                string password = txtPass.Text;
-
-                if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
-                {
-                    lblStatus2.Text = "Username and password are required.";
-                    lblStatus2.ForeColor = AccRed;
-                    return;
-                }
-
-                btnAuth.Enabled = false;
-                lblStatus2.ForeColor = TextMuted;
-                lblStatus2.Text = "Verifying…";
-
-                try
-                {
-                    bool authorized = false;
-                    bool canChange = false;
-                    string role = "";
-
-                    if (GetOnline())
-                    {
-                        try
-                        {
-                            var api = new ApiService();
-                            string json = await api.GetAsync("api/POSPermission/authorize-price-override?username=" + username + "&password=" + password)
-                                                   .ConfigureAwait(true);
-                            if (!string.IsNullOrEmpty(json))
-                            {
-                                var opts = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                                var res = System.Text.Json.JsonSerializer.Deserialize<ApiResponse<bool>>(json, opts);
-                                if (res?.IsSuccess == true && res.Data)
-                                {
-                                    authorized = true;
-                                    canChange = true;
-                                    role = "Supervisor";
-                                }
-                            }
-                        }
-                        catch (Exception ex) { Debug.WriteLine("PriceGroupAuth API: " + ex.Message); }
-                    }
-                    else
-                    {
-                        var res = await VerifyRoleFromSQLite(username, password).ConfigureAwait(true);
-                        authorized = res.authorized;
-                        role = res.role;
-                        canChange = res.authorized;
-                    }
-
-                    if (!authorized)
-                    {
-                        lblStatus2.ForeColor = AccRed;
-                        lblStatus2.Text = "⛔  Invalid username or password.";
-                        return;
-                    }
-                    if (!canChange)
-                    {
-                        lblStatus2.ForeColor = AccRed;
-                        lblStatus2.Text = $"⛔  Role '{role}' cannot change price groups.";
-                        return;
-                    }
-
-                    lblStatus2.ForeColor = TextGreen;
-                    lblStatus2.Text = $"✓  Authorised{(!string.IsNullOrEmpty(role) ? $" as {role}" : "")}";
-
-                    await Task.Delay(450);
-                    result = true;           // signal success to the caller
-                    dlg.Close();
-                }
-                catch (Exception ex)
-                {
-                    lblStatus2.ForeColor = AccRed;
-                    lblStatus2.Text = "Error: " + ex.Message;
-                }
-                finally { btnAuth.Enabled = true; }
-            }
-
-            btnAuth.Click += (s, ev) => DoAuth();
-            dlg.KeyDown += (s, ev) =>
-            {
-                if (ev.KeyCode == Keys.Enter) { ev.Handled = true; DoAuth(); }
-                if (ev.KeyCode == Keys.Escape) { ev.Handled = true; dlg.Close(); }
-            };
-
-            dlg.Controls.AddRange(new Control[] { btnAuth, btnCancel });
-            dlg.Shown += (s, ev) => txtUser.Focus();
-            dlg.ShowDialog(owner);     // blocks until closed
-
-            return result;
-        }
-        private void ShowProductDetailPopup(Product prod)
-        {
-            // ── Resolve D365 detail records for this product ──────────────────────
-            _d365Details.TryGetValue(prod.Barcode, out var details);
-
-            // If no D365 detail rows, fall back to plain cart-add
-            if (details == null || details.Count == 0)
-            {
-                AddToCart(prod, 1);
-                return;
-            }
-
-            // ── Resolve default group BEFORE anything else ────────────────────────
-            // True "(default)" = blank AccountRelation; fallback = first row
-            //var defaultGroupDetail = details.FirstOrDefault(d =>
-            //    string.IsNullOrWhiteSpace(d.AccountRelation)) ?? details[0];
-            var defaultGroupDetail = details.FirstOrDefault(d =>
-    d.AccountRelation == "A") ?? details[0];
-
-            // Working copy — changes as the user switches price group
-            D365ProductDetail cur = defaultGroupDetail;
-
-            // ── Popup form ────────────────────────────────────────────────────────
-            var dlg = new Form
-            {
-                FormBorderStyle = FormBorderStyle.None,
-                StartPosition = FormStartPosition.CenterParent,
-                BackColor = Color.FromArgb(28, 32, 42),
-                ClientSize = new Size(500, 490),
-                KeyPreview = true,
-                ShowInTaskbar = false
-            };
-            dlg.Region = MakeRoundedRegion(dlg.Size, 14);
-
-            // ── Header bar ────────────────────────────────────────────────────────
-            var pnlHead = new Panel
-            {
-                BackColor = Color.FromArgb(42, 46, 58),
-                Size = new Size(500, 54),
-                Location = Point.Empty
-            };
-            pnlHead.Controls.Add(new Label
-            {
-                Text = "📦  Product Detail",
-                Font = new Font("Segoe UI", 11F, FontStyle.Bold),
-                ForeColor = TextWhite,
-                BackColor = Color.Transparent,
-                AutoSize = false,
-                Size = new Size(440, 54),
-                Location = new Point(14, 0),
-                TextAlign = ContentAlignment.MiddleLeft
-            });
-            var btnX = new Button
-            {
-                Text = "✕",
-                Font = new Font("Segoe UI", 11F, FontStyle.Bold),
-                ForeColor = TextMuted,
-                BackColor = Color.Transparent,
-                FlatStyle = FlatStyle.Flat,
-                Size = new Size(44, 54),
-                Location = new Point(456, 0),
-                Cursor = Cursors.Hand
-            };
-            btnX.FlatAppearance.BorderSize = 0;
-            btnX.Click += (s, ev) => dlg.Close();
-            pnlHead.Controls.Add(btnX);
-            dlg.Controls.Add(pnlHead);
-
-            // ── Product name + item ID banner ─────────────────────────────────────
-            dlg.Controls.Add(new Label
-            {
-                Text = cur.NameAlias,
-                Font = new Font("Segoe UI", 13F, FontStyle.Bold),
-                ForeColor = TextWhite,
-                BackColor = Color.Transparent,
-                AutoSize = false,
-                Size = new Size(460, 32),
-                Location = new Point(20, 62),
-                TextAlign = ContentAlignment.MiddleLeft
-            });
-            dlg.Controls.Add(new Label
-            {
-                Text = $"Item ID:  {cur.ItemId}",
-                Font = new Font("Segoe UI", 8.5F),
-                ForeColor = TextMuted,
-                BackColor = Color.Transparent,
-                AutoSize = true,
-                Location = new Point(20, 94)
-            });
-
-            // ── Separator ─────────────────────────────────────────────────────────
-            dlg.Controls.Add(new Panel
-            {
-                BackColor = Color.FromArgb(50, 54, 66),
-                Size = new Size(460, 1),
-                Location = new Point(20, 116)
-            });
-
-            // ── Helper: info row ──────────────────────────────────────────────────
-            int fieldY = 126;
-            Label AddInfoRow(string icon, string caption, string value, Color valColor)
-            {
-                dlg.Controls.Add(new Label
-                {
-                    Text = icon + "  " + caption,
-                    Font = new Font("Segoe UI", 8.5F),
-                    ForeColor = TextMuted,
-                    BackColor = Color.Transparent,
-                    AutoSize = false,
-                    Size = new Size(200, 28),
-                    Location = new Point(20, fieldY),
-                    TextAlign = ContentAlignment.MiddleLeft
-                });
-                var lv = new Label
-                {
-                    Text = value,
-                    Font = new Font("Segoe UI", 9F, FontStyle.Bold),
-                    ForeColor = valColor,
-                    BackColor = Color.Transparent,
-                    AutoSize = false,
-                    Size = new Size(240, 28),
-                    Location = new Point(230, fieldY),
-                    TextAlign = ContentAlignment.MiddleRight
-                };
-                dlg.Controls.Add(lv);
-                fieldY += 32;
-                return lv;
-            }
-
-            // Info rows use cur which is already set to the default group
-            var lvAvail = AddInfoRow("📦", "Available (Physical)", $"{cur.AvailPhysical:F0} units", cur.AvailPhysical > 0 ? TextGreen : AccRed);
-            var lvSite = AddInfoRow("🏭", "Inventory Site", cur.InventSiteId, AccBlue);
-            var lvLocation = AddInfoRow("📍", "Inventory Location", cur.InventLocationId, AccCyan);
-            var lvWMS = AddInfoRow("🗂️", "WMS Location", cur.WMSLocationId, TextMuted);
-            var lvAmount = AddInfoRow("💰", "Unit Price", Fmt(cur.Amount), TextGreen);
-
-            // ── Separator ─────────────────────────────────────────────────────────
-            dlg.Controls.Add(new Panel
-            {
-                BackColor = Color.FromArgb(50, 54, 66),
-                Size = new Size(460, 1),
-                Location = new Point(20, fieldY + 4)
-            });
-            fieldY += 14;
-
-            // ── Price Group section label ─────────────────────────────────────────
-            dlg.Controls.Add(new Label
-            {
-                Text = "PRICE GROUP  (AccountRelation)",
-                Font = new Font("Segoe UI", 7.5F, FontStyle.Bold),
-                ForeColor = Color.FromArgb(80, 90, 110),
-                BackColor = Color.Transparent,
-                AutoSize = true,
-                Location = new Point(20, fieldY)
-            });
-            fieldY += 20;
-
-            // ── Price Group dropdown ───────────────────────────────────────────────
-            var cmbPriceGroup = new ComboBox
-            {
-                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
-                ForeColor = TextWhite,
-                BackColor = Color.FromArgb(38, 42, 54),
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                FlatStyle = FlatStyle.Flat,
-                Size = new Size(460, 30),
-                Location = new Point(20, fieldY)
-            };
-            fieldY += 38;
-
-            // Populate — "(default)" always first, then alphabetical
-            var groups = details
-                .Select(d => string.IsNullOrWhiteSpace(d.AccountRelation) ? "(default)" : d.AccountRelation)
-                .Distinct()
-                .OrderBy(g => g == "(default)" ? "\0" : g)   // \0 sorts before any letter
-                .ToList();
-
-            foreach (var g in groups) cmbPriceGroup.Items.Add(g);
-
-            // Pre-select the group that matches the resolved default detail row
-            string defaultGroupName = string.IsNullOrWhiteSpace(defaultGroupDetail.AccountRelation)
-                ? "(default)"
-                : defaultGroupDetail.AccountRelation;
-
-            int defaultIdx = groups.IndexOf(defaultGroupName);
-            cmbPriceGroup.SelectedIndex = defaultIdx >= 0 ? defaultIdx : 0;
-
-            dlg.Controls.Add(cmbPriceGroup);
-
-            // ── Auth-status badge ─────────────────────────────────────────────────
-            var lblAuthBadge = new Label
-            {
-                Text = "",
-                Font = new Font("Segoe UI", 8F, FontStyle.Italic),
-                ForeColor = AccRed,
-                BackColor = Color.Transparent,
-                AutoSize = false,
-                Size = new Size(460, 20),
-                Location = new Point(20, fieldY),
-                TextAlign = ContentAlignment.MiddleLeft,
-                Visible = false
-            };
-            dlg.Controls.Add(lblAuthBadge);
-            fieldY += 22;
-
-            // ── Guard state ───────────────────────────────────────────────────────
-            bool _authInProgress = false;
-            int _lastGoodIndex = cmbPriceGroup.SelectedIndex;   // default group index
-
-            // ── Price group change — requires supervisor auth ──────────────────────
-            cmbPriceGroup.SelectedIndexChanged += async (s, ev) =>
-            {
-                if (_authInProgress) return;
-
-                int newIndex = cmbPriceGroup.SelectedIndex;
-                if (newIndex == _lastGoodIndex) return;
-
-                string newGroup = cmbPriceGroup.SelectedItem?.ToString() ?? "";
-                var targetDetail = details.FirstOrDefault(d =>
-                    (string.IsNullOrWhiteSpace(d.AccountRelation) ? "(default)" : d.AccountRelation)
-                    .Equals(newGroup, StringComparison.OrdinalIgnoreCase));
-
-                if (targetDetail == null) return;
-
-                // Require auth to change price group
-                bool authorized = await ShowPriceGroupAuthDialogAsync(dlg, newGroup, targetDetail.Amount);
-
-                if (!authorized)
-                {
-                    _authInProgress = true;
-                    cmbPriceGroup.SelectedIndex = _lastGoodIndex;
-                    _authInProgress = false;
-
-                    lblAuthBadge.Text = "⛔  Authorisation failed — price group unchanged.";
-                    lblAuthBadge.ForeColor = AccRed;
-                    lblAuthBadge.Visible = true;
-                    return;
-                }
-
-                // Auth passed — apply new detail row
-                _lastGoodIndex = newIndex;
-                cur = targetDetail;
-
-                lvAvail.Text = $"{cur.AvailPhysical:F0} units";
-                lvAvail.ForeColor = cur.AvailPhysical > 0 ? TextGreen : AccRed;
-                lvSite.Text = cur.InventSiteId;
-                lvLocation.Text = cur.InventLocationId;
-                lvWMS.Text = cur.WMSLocationId;
-                lvAmount.Text = Fmt(cur.Amount);
-
-                lblAuthBadge.Text = $"✓  Authorised — Price Group set to '{newGroup}'  ({Fmt(cur.Amount)})";
-                lblAuthBadge.ForeColor = TextGreen;
-                lblAuthBadge.Visible = true;
-            };
-
-            // ── Separator ─────────────────────────────────────────────────────────
-            dlg.Controls.Add(new Panel
-            {
-                BackColor = Color.FromArgb(50, 54, 66),
-                Size = new Size(460, 1),
-                Location = new Point(20, fieldY)
-            });
-            fieldY += 10;
-
-            // ── Quantity row ──────────────────────────────────────────────────────
-            dlg.Controls.Add(new Label
-            {
-                Text = "Quantity",
-                Font = new Font("Segoe UI", 8.5F),
-                ForeColor = TextMuted,
-                BackColor = Color.Transparent,
-                AutoSize = false,
-                Size = new Size(200, 30),
-                Location = new Point(20, fieldY),
-                TextAlign = ContentAlignment.MiddleLeft
-            });
-
-            var nudQty = new NumericUpDown
-            {
-                Minimum = 1,
-                Maximum = 9999,
-                Value = 1,
-                Font = new Font("Segoe UI", 11F, FontStyle.Bold),
-                ForeColor = TextWhite,
-                BackColor = Color.FromArgb(38, 42, 54),
-                Size = new Size(100, 30),
-                Location = new Point(380, fieldY),
-                TextAlign = System.Windows.Forms.HorizontalAlignment.Right
-            };
-            ((System.ComponentModel.ISupportInitialize)nudQty).BeginInit();
-            ((System.ComponentModel.ISupportInitialize)nudQty).EndInit();
-            dlg.Controls.Add(nudQty);
-            fieldY += 40;
-
-            // ── Buttons ───────────────────────────────────────────────────────────
-            var btnAdd = new Button
-            {
-                Text = "✓  Add to Cart",
-                Font = new Font("Segoe UI", 10.5F, FontStyle.Bold),
-                ForeColor = Color.White,
-                BackColor = AccGreen,
-                FlatStyle = FlatStyle.Flat,
-                Size = new Size(220, 42),
-                Location = new Point(20, fieldY),
-                Cursor = Cursors.Hand
-            };
-            btnAdd.FlatAppearance.BorderSize = 0;
-            btnAdd.Region = MakeRoundedRegion(btnAdd.Size, 8);
-
-            var btnCancel = new Button
-            {
-                Text = "Cancel",
-                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
-                ForeColor = TextMuted,
-                BackColor = Color.FromArgb(44, 48, 60),
-                FlatStyle = FlatStyle.Flat,
-                Size = new Size(218, 42),
-                Location = new Point(252, fieldY),
-                Cursor = Cursors.Hand
-            };
-            btnCancel.FlatAppearance.BorderSize = 0;
-            btnCancel.Region = MakeRoundedRegion(btnCancel.Size, 8);
-            btnCancel.Click += (s, ev) => dlg.Close();
-            btnAdd.Click += async (s, ev) =>
-            {
-                int qty = (int)nudQty.Value;
-
-                var selectedProd = new Product
-                {
-                    Name = cur.NameAlias,
-                    ItemId = prod.ItemId,
-                    Price = cur.Amount,
-                    Barcode = cur.ItemId,
-                    Category = cur.InventSiteId,
-                    UOM = prod.UOM,                       // ← preserve real UOM
-                    AvailableUOMs = prod.AvailableUOMs     // ← preserve pack sizes (with correct UnitsPerPack)
-                };
-
-                dlg.Close();
-                await AddToCart(selectedProd, qty, prod.UOM);   // ← pass uomId explicitly so it isn't re-resolved to base
-            };
-
-            dlg.KeyDown += (s, ev) =>
-            {
-                if (ev.KeyCode == Keys.Enter) { ev.Handled = true; btnAdd.PerformClick(); }
-                if (ev.KeyCode == Keys.Escape) { ev.Handled = true; dlg.Close(); }
-            };
-
-            dlg.Controls.AddRange(new Control[] { btnAdd, btnCancel });
-
-            // Resize form to fit all controls
-            dlg.ClientSize = new Size(500, fieldY + 60);
-            dlg.Region = MakeRoundedRegion(dlg.ClientSize, 14);
-
-            dlg.ShowDialog(this);
-        }
+        } 
+       
 
         // ══════════════════════════════════════════════════════════════════════
         //  BARCODE
@@ -8029,20 +6643,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                         .Equals(newGroup, StringComparison.OrdinalIgnoreCase));
                     if (targetDetail == null) return;
 
-                    bool authorized = await ShowPriceGroupAuthDialogAsync(dlg, newGroup, targetDetail.Amount);
-
-                    if (!authorized)
-                    {
-                        _authInProgress = true;
-                        cmbPriceGroup.SelectedIndex = _lastGoodIndex;
-                        _authInProgress = false;
-
-                        lblAuthBadge.Text = "⛔  Authorisation failed — price group unchanged.";
-                        lblAuthBadge.ForeColor = AccRed;
-                        lblAuthBadge.Visible = true;
-                        return;
-                    }
-
+                   
                     _lastGoodIndex = newIndex;
                     tbPrice.Text = targetDetail.Amount.ToString("F2");
 
@@ -8251,8 +6852,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             }
 
             decimal totalQty = _cart.Sum(i => i.Qty * GetUnitsPerPackForCartItem(i));
-
-            lblStockReduction.Text = $"📉 Stock to reduce: {totalQty:F0} unit(s) across {_cart.Count} line(s)";
+            lblStockReduction.Text = $"📉 Stock to reduce: {totalQty:F0} unit(s)";
             lblStockReduction.ForeColor = AccOrange;
         }
         // ── Shows remaining amount due (or change/paid state) in the big centre banner ──
@@ -10113,14 +8713,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 if (defaultCustomer != null)
                     _cmbCustomer.SelectedItem = defaultCustomer;
             }
-            if (_pendingBanner != null && !_pendingBanner.IsDisposed)
-            {
-                panelCartItems.Controls.Remove(_pendingBanner);
-                _pendingBanner.Dispose();
-                _pendingBanner = null;
-                foreach (Control c in panelCartItems.Controls)
-                    c.Location = new Point(c.Left, c.Top - 30);
-            }
+            
 
             if (txtSearch != null) txtSearch.Enabled = true;
             //if (txtBarcode != null) txtBarcode.Enabled = true;
@@ -10245,21 +8838,43 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                     lblShortcuts.MaximumSize = new Size(Math.Max(100, maxLblRight - lblShortcuts.Left), 20);
                 }
 
-                int rightEdge = btnMin.Left - 20;
-                //if (txtBarcode != null)
-                //{
-                //    txtBarcode.Location = new Point(rightEdge - txtBarcode.Width, 10);
-                //    if (lblBarcodeHeader != null)
-                //        lblBarcodeHeader.Location = new Point(txtBarcode.Left - 16, 12);
-                //    if (lblBarcodeSep != null)
-                //        lblBarcodeSep.Location = new Point(txtBarcode.Left - 34, 10);
-                //}
+                // ── Search box: start at the center panel's left edge, stop before Min/Max/Close ──
+                Control searchCtl = (Control)_searchWrapper ?? txtSearch;
+                if (searchCtl != null && !searchCtl.IsDisposed && panelCentre != null)
+                {
+                    const int MIN_W = 140;
+                    const int GAP = 12;
 
-                //if (txtSearch != null && lblBarcodeSep != null)
-                //{
-                //    int searchRight = lblBarcodeSep.Left - 10;
-                //    txtSearch.Width = Math.Max(200, searchRight - txtSearch.Left);
-                //}
+                    int rightEdge = btnMin.Left - GAP;
+                    int minLeft = (lblInvoiceNo != null ? lblInvoiceNo.Right + 24 : 120);
+
+                    // left edge of the center panel, in header coordinates
+                    int centreLeft = panelHeader.PointToClient(panelCentre.PointToScreen(Point.Empty)).X;
+
+                    int left = Math.Max(centreLeft, minLeft);
+                    int newW = Math.Min(panelCentre.Width, rightEdge - left);   // same width as the cart panel
+
+                    if (newW < MIN_W)                                           // very narrow window
+                    {
+                        newW = MIN_W;
+                        left = Math.Max(minLeft, rightEdge - MIN_W);
+                    }
+
+                    searchCtl.SetBounds(left, searchCtl.Top, newW, searchCtl.Height);
+
+                    if (searchCtl == _searchWrapper)
+                    {
+                        txtSearch.Width = Math.Max(40, _searchWrapper.Width - 26 - 10);
+                        _searchWrapper.Region?.Dispose();
+                        _searchWrapper.Region = MakeRoundedRegion(_searchWrapper.Size, 8);
+                        _searchWrapper.Invalidate();
+                    }
+
+                    if (lblSearchHeader != null) lblSearchHeader.Visible = false;
+                    if (lblSearchSep != null) lblSearchSep.Left = Math.Max(minLeft - 16, left - 18);
+
+                    RepositionSearchResults();
+                }
             }
             catch (ObjectDisposedException) { }
         }
@@ -10319,8 +8934,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
             _scheduler?.Dispose();
-            _hotItemsTooltip?.Dispose();
-            base.OnFormClosed(e);
+            _hotItemsTooltip?.Dispose(); 
             _productSyncTimer?.Stop(); _productSyncTimer?.Dispose();
             _offlineOrderSyncTimer?.Stop(); _offlineOrderSyncTimer?.Dispose();
             _stockSyncTimer?.Stop(); _stockSyncTimer?.Dispose();
@@ -10338,67 +8952,118 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
 
             var g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
 
             bool selected = (e.State & DrawItemState.Selected) != 0;
             bool hot = (e.State & DrawItemState.HotLight) != 0;
+            bool active = selected || hot;
 
-            // Row background
-            Color rowBg = selected || hot
-                ? Color.FromArgb(45, 110, 255)          // accent blue when selected
-                : e.Index % 2 == 0
-                    ? Color.FromArgb(30, 34, 46)        // even row
-                    : Color.FromArgb(36, 40, 54);       // odd row — subtle stripe
-
+            // ── Row background ─────────────────────────────────────────────
+            Color rowBg = active ? Color.FromArgb(45, 110, 255)
+                        : e.Index % 2 == 0 ? Color.FromArgb(30, 34, 46)
+                                           : Color.FromArgb(36, 40, 54);
             using (var bgBrush = new SolidBrush(rowBg))
                 g.FillRectangle(bgBrush, e.Bounds);
 
-            // Left accent bar on selected row
-            if (selected || hot)
+            if (active)
             {
                 using var accentBrush = new SolidBrush(Color.FromArgb(99, 179, 255));
                 g.FillRectangle(accentBrush, new Rectangle(e.Bounds.X, e.Bounds.Y, 3, e.Bounds.Height));
             }
 
-            // Parse "Product Name — P xx.xx"
+            // ── Parse "Name — P 75.00  ✅ 635" ─────────────────────────────
             string fullText = listSearchResults.Items[e.Index].ToString();
             string[] parts = fullText.Split(new[] { " — " }, StringSplitOptions.None);
-            string name = parts.Length > 0 ? parts[0].Trim() : fullText;
-            string price = parts.Length > 1 ? parts[1].Trim() : "";
+            string name = parts[0].Trim();
+            string price = "", stockNum = "";
+            Color stockColor = AccGreen;
 
-            // Search icon
+            if (parts.Length > 1)
+            {
+                string rest = parts[1].Trim();
+                int gap = rest.IndexOf("  ", StringComparison.Ordinal);
+                if (gap >= 0)
+                {
+                    price = rest.Substring(0, gap).Trim();
+                    string st = rest.Substring(gap + 2).Trim();          // e.g. "✅ 635"
+                    int sp = st.LastIndexOf(' ');
+                    stockNum = sp >= 0 ? st.Substring(sp + 1) : st;
+                    string icon = sp >= 0 ? st.Substring(0, sp) : "";
+                    stockColor = icon.Contains("❌") ? AccRed
+                               : icon.Contains("⚠") ? AccOrange
+                               : AccGreen;
+                }
+                else price = rest;
+            }
+
+            using var noWrap = new StringFormat(StringFormatFlags.NoWrap)
+            {
+                LineAlignment = StringAlignment.Center,
+                Trimming = StringTrimming.EllipsisCharacter
+            };
+            using var noWrapRight = new StringFormat(StringFormatFlags.NoWrap)
+            {
+                Alignment = StringAlignment.Far,
+                LineAlignment = StringAlignment.Center
+            };
+
+            // ── Column layout (right to left) ──────────────────────────────
+            const int RIGHT_PAD = 10, STOCK_W = 60, COL_GAP = 8, NAME_MIN_W = 60;
+            int right = e.Bounds.Right - RIGHT_PAD;
+
+            // Stock column (fixed width so every row lines up)
+            var stockRect = new RectangleF(right - STOCK_W, e.Bounds.Y, STOCK_W, e.Bounds.Height);
+            right -= STOCK_W + COL_GAP;
+
+            // Price column (measured so large prices never get clipped)
+            using var priceFont = new Font("Segoe UI", 8.5F, FontStyle.Bold);
+            float priceW = Math.Max(70f, g.MeasureString(price, priceFont).Width + 6f);
+            var priceRect = new RectangleF(right - priceW, e.Bounds.Y, priceW, e.Bounds.Height);
+            right -= (int)priceW + COL_GAP;
+
+            // ── Search icon ────────────────────────────────────────────────
             using (var iconFont = new Font("Segoe UI Emoji", 9F))
-            using (var iconBrush = new SolidBrush(selected ? Color.White : Color.FromArgb(59, 130, 246)))
+            using (var iconBrush = new SolidBrush(active ? Color.White : Color.FromArgb(59, 130, 246)))
                 g.DrawString("🔍", iconFont, iconBrush,
                     new RectangleF(e.Bounds.X + 6, e.Bounds.Y, 22, e.Bounds.Height),
                     new StringFormat { LineAlignment = StringAlignment.Center });
 
-            // Product name
+            // ── Product name (takes all remaining space, ellipsis if too long) ──
+            float nameX = e.Bounds.X + 32;
+            float nameW = Math.Max(NAME_MIN_W, right - nameX);
             using (var nameFont = new Font("Segoe UI", 9.5F, FontStyle.Bold))
-            using (var nameBrush = new SolidBrush(selected ? Color.White : Color.FromArgb(220, 228, 245)))
+            using (var nameBrush = new SolidBrush(active ? Color.White : Color.FromArgb(220, 228, 245)))
+                g.DrawString(name, nameFont, nameBrush,
+                    new RectangleF(nameX, e.Bounds.Y, nameW, e.Bounds.Height), noWrap);
+
+            // ── Price ──────────────────────────────────────────────────────
+            if (price.Length > 0)
             {
-                var nameRect = new RectangleF(e.Bounds.X + 32, e.Bounds.Y, e.Bounds.Width - 110, e.Bounds.Height);
-                var sf = new StringFormat { LineAlignment = StringAlignment.Center, Trimming = StringTrimming.EllipsisCharacter };
-                g.DrawString(name, nameFont, nameBrush, nameRect, sf);
+                using var priceBrush = new SolidBrush(active ? Color.FromArgb(180, 255, 200)
+                                                             : Color.FromArgb(52, 211, 153));
+                g.DrawString(price, priceFont, priceBrush, priceRect, noWrapRight);
             }
 
-            // Price — right-aligned
-            if (!string.IsNullOrEmpty(price))
+            // ── Stock: coloured dot + count (no emoji, so it never wraps/overlaps) ──
+            if (stockNum.Length > 0)
             {
-                using (var priceFont = new Font("Segoe UI", 8.5F, FontStyle.Bold))
-                using (var priceBrush = new SolidBrush(selected ? Color.FromArgb(180, 255, 200) : Color.FromArgb(52, 211, 153)))
-                {
-                    var priceRect = new RectangleF(e.Bounds.Right - 100, e.Bounds.Y, 96, e.Bounds.Height);
-                    var sf = new StringFormat { Alignment = StringAlignment.Far, LineAlignment = StringAlignment.Center };
-                    g.DrawString(price, priceFont, priceBrush, priceRect, sf);
-                }
+                Color c = active ? Color.White : stockColor;
+                using (var dotBrush = new SolidBrush(c))
+                    g.FillEllipse(dotBrush, stockRect.X + 4, e.Bounds.Y + (e.Bounds.Height - 8) / 2f, 8, 8);
+
+                using var stockFont = new Font("Segoe UI", 8.5F, FontStyle.Bold);
+                using var stockBrush = new SolidBrush(c);
+                g.DrawString(stockNum, stockFont, stockBrush,
+                    new RectangleF(stockRect.X + 14, stockRect.Y, stockRect.Width - 14, stockRect.Height),
+                    noWrapRight);
             }
 
-            // Bottom separator line
+            // ── Bottom separator ───────────────────────────────────────────
             if (!selected)
             {
                 using var sepPen = new Pen(Color.FromArgb(45, 50, 68), 1f);
                 g.DrawLine(sepPen, e.Bounds.Left + 32, e.Bounds.Bottom - 1,
-                                    e.Bounds.Right - 8, e.Bounds.Bottom - 1);
+                                   e.Bounds.Right - 8, e.Bounds.Bottom - 1);
             }
         }
     }
