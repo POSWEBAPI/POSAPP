@@ -614,6 +614,149 @@ namespace POSAPP
             FocusSearchBox();
         }
 
+        // ══════════════════════════════════════════════════════════════════════
+        //  EMPTY CHARGE ROW CONFIRMATION  (shown on Save)
+        //  Returns true  → user chose "Remove & Continue"
+        //          false → user cancelled
+        // ══════════════════════════════════════════════════════════════════════
+        private bool ShowEmptyChargeConfirmDialog(int emptyCount)
+        {
+            bool result = false;
+
+            var dlg = new Form
+            {
+                FormBorderStyle = FormBorderStyle.None,
+                StartPosition = FormStartPosition.CenterParent,
+                BackColor = Color.FromArgb(22, 26, 36),
+                ShowInTaskbar = false,
+                KeyPreview = true,
+                AutoScaleMode = AutoScaleMode.None      // we do our own DPI scaling below
+            };
+
+            float scale = this.DeviceDpi / 96f;
+            int S(int v) => (int)Math.Round(v * scale);
+
+            int W = S(460), M = S(28);
+
+            string body = emptyCount == 1
+                ? "You clicked Add Charge but didn't select any charge.\nDo you want to remove the empty charge row and continue?"
+                : $"You clicked Add Charge but {emptyCount} rows have no charge selected.\nDo you want to remove the empty charge rows and continue?";
+
+            using var titleFont = new Font("Segoe UI", 13F, FontStyle.Bold);
+            using var msgFont = new Font("Segoe UI", 10F);
+            using var btnFont = new Font("Segoe UI", 10F, FontStyle.Bold);
+
+            // heights come from the real font metrics, so nothing is clipped at any DPI
+            int titleH = titleFont.Height + S(8);
+            int msgH = TextRenderer.MeasureText(body, msgFont, new Size(W - M * 2, 0),
+                             TextFormatFlags.WordBreak | TextFormatFlags.NoPadding).Height + S(8);
+            int btnH = Math.Max(S(42), btnFont.Height + S(18));
+
+            // orange accent bar
+            dlg.Controls.Add(new Panel { Size = new Size(W, S(5)), Location = Point.Empty, BackColor = AccOrange });
+
+            int y = S(28);
+
+            // round icon, drawn by hand (no emoji glyph to clip)
+            int icoSize = S(56);
+            var ico = new Panel
+            {
+                Size = new Size(icoSize, icoSize),
+                Location = new Point((W - icoSize) / 2, y),
+                BackColor = Color.FromArgb(60, 45, 18)
+            };
+            ico.Region = MakeRoundedRegion(ico.Size, icoSize / 2);
+            ico.Paint += (s, pe) =>
+            {
+                using var f = new Font("Segoe UI", 22F, FontStyle.Bold);
+                TextRenderer.DrawText(pe.Graphics, "!", f, ico.ClientRectangle, AccOrange,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+            };
+            dlg.Controls.Add(ico);
+            y += icoSize + S(14);
+
+            dlg.Controls.Add(new Label
+            {
+                Text = "Empty charge row found",
+                Font = titleFont,
+                ForeColor = TextWhite,
+                BackColor = Color.Transparent,
+                AutoSize = false,
+                Size = new Size(W, titleH),
+                Location = new Point(0, y),
+                TextAlign = ContentAlignment.MiddleCenter,
+                UseCompatibleTextRendering = false
+            });
+            y += titleH + S(6);
+
+            dlg.Controls.Add(new Label
+            {
+                Text = body,
+                Font = msgFont,
+                ForeColor = TextMuted,
+                BackColor = Color.Transparent,
+                AutoSize = false,
+                Size = new Size(W - M * 2, msgH),
+                Location = new Point(M, y),
+                TextAlign = ContentAlignment.TopCenter
+            });
+            y += msgH + S(20);
+
+            int gap = S(12);
+            int btnW = (W - M * 2 - gap) / 2;
+
+            var btnCancel = new Button
+            {
+                Text = "Cancel",
+                Font = btnFont,
+                ForeColor = TextMuted,
+                BackColor = Color.FromArgb(44, 48, 60),
+                FlatStyle = FlatStyle.Flat,
+                Size = new Size(btnW, btnH),
+                Location = new Point(M, y),
+                Cursor = Cursors.Hand,
+                UseCompatibleTextRendering = false
+            };
+            btnCancel.FlatAppearance.BorderSize = 0;
+            btnCancel.Region = MakeRoundedRegion(btnCancel.Size, S(10));
+            btnCancel.Click += (s, e) => { result = false; dlg.Close(); };
+
+            var btnOk = new Button
+            {
+                Text = "Remove && Continue",           // && renders as a single &
+                Font = btnFont,
+                ForeColor = Color.White,
+                BackColor = AccOrange,
+                FlatStyle = FlatStyle.Flat,
+                Size = new Size(btnW, btnH),
+                Location = new Point(M + btnW + gap, y),
+                Cursor = Cursors.Hand,
+                UseCompatibleTextRendering = false,
+                UseMnemonic = true
+            };
+            btnOk.FlatAppearance.BorderSize = 0;
+            btnOk.Region = MakeRoundedRegion(btnOk.Size, S(10));
+            btnOk.MouseEnter += (s, e) => btnOk.BackColor = ControlPaint.Dark(AccOrange, 0.1f);
+            btnOk.MouseLeave += (s, e) => btnOk.BackColor = AccOrange;
+            btnOk.Click += (s, e) => { result = true; dlg.Close(); };
+
+            dlg.Controls.AddRange(new Control[] { btnCancel, btnOk });
+            y += btnH + S(24);
+
+            dlg.ClientSize = new Size(W, y);
+            dlg.Region = MakeRoundedRegion(dlg.ClientSize, S(16));
+
+            dlg.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Enter) { e.Handled = true; btnOk.PerformClick(); }
+                if (e.KeyCode == Keys.Escape) { e.Handled = true; btnCancel.PerformClick(); }
+            };
+            dlg.Shown += (s, e) => btnOk.Focus();
+            dlg.ShowDialog(this);
+
+            return result;
+        }
+
         private ToastForm _toast;
         private System.Windows.Forms.Timer _toastTimer;
 
@@ -7995,6 +8138,22 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
 
             try
             {
+                // ── Empty charge rows: user clicked "+ Add Charge" but never picked a charge ──
+                int emptyChargeRows = _charges.Count(c => c.ChargesID <= 0);
+                if (emptyChargeRows > 0)
+                {
+                    if (!ShowEmptyChargeConfirmDialog(emptyChargeRows))
+                    {
+                        ShowStatus("Sale not saved — select a charge or remove the empty row(s).", false);
+                        return;                                   // finally{} re-enables the Save button
+                    }
+
+                    _charges.RemoveAll(c => c.ChargesID <= 0);
+                    _chargesAllocated = false;
+                    RefreshChargesButtonLabel();
+                    RefreshCart();
+                    UpdateTotals();
+                }
                 // ── Final stock validation before tendering ─────────────────────────
                 var overStockItems = new List<string>();
                 bool hasOutOfStockItems = false;
