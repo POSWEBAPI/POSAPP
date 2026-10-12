@@ -136,6 +136,11 @@ namespace POSAPP.Payment
         [JsonPropertyName("WinPos")] public string WinPos { get; set; } = "";
         [JsonPropertyName("lines")] public List<CreateSOLinePayload> Lines { get; set; } = new();
         [JsonPropertyName("charges")] public List<CreateSOChargePayload> Charges { get; set; } = new();
+        [JsonPropertyName("soNumber"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? SONumber { get; set; }
+
+        [JsonPropertyName("soDate"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public DateTime? SODate { get; set; }
     }
 
     public static class SalesOrderApi
@@ -461,7 +466,28 @@ namespace POSAPP.Payment
                 System.Diagnostics.Debug.WriteLine("GetSalesOrderByIdAsync failed: " + ex.Message);
                 return null;
             }
-        } 
+        }
+        public static async Task<bool> UpdateSalesOrderAsync(int soId, CreateSalesOrderPayload payload)
+        {
+            ApplyAuthHeader();
+            try
+            {
+                string requestJson = JsonSerializer.Serialize(payload);
+                Debug.WriteLine("UpdateSalesOrderAsync REQUEST BODY: " + requestJson);
+
+                var content = new StringContent(requestJson, Encoding.UTF8, "application/json");
+                var resp = await _http.PutAsync(new Uri(new Uri(BaseUrl), $"api/SalesOrder/{soId}"), content);
+
+                string body = await resp.Content.ReadAsStringAsync();
+                Debug.WriteLine($"UpdateSalesOrderAsync RESPONSE ({(int)resp.StatusCode}): {body}");
+                return resp.IsSuccessStatusCode;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("UpdateSalesOrderAsync failed: " + ex.Message);
+                return false;
+            }
+        }
 
         public static async Task<bool> DeleteSalesOrderAsync(int soId)
         {
@@ -675,6 +701,16 @@ namespace POSAPP.Payment
                         System.Diagnostics.Debug.WriteLine(
                             $"CreateSalesOrderAsync: recovered SoNumber '{soNumber}' via GetSalesOrderByIdAsync fallback.");
                     }
+                }
+                // Backend create ignores deliveryDate (React does the same follow-up update),
+                // so push it with an immediate PUT.
+                if (soId.HasValue && soId.Value > 0)
+                {
+                    payload.SONumber = soNumber;
+                    payload.SODate = DateTime.UtcNow;
+                    bool dateSaved = await UpdateSalesOrderAsync(soId.Value, payload).ConfigureAwait(false);
+                    if (!dateSaved)
+                        Debug.WriteLine($"CreateSalesOrderAsync: SO {soNumber} created but delivery date update failed.");
                 }
 
                 return (true, soId, soNumber);

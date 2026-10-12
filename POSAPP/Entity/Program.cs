@@ -19,8 +19,7 @@ namespace POSAPP.Entity
 
         [STAThread]
         static void Main()
-        {
-            Velopack.VelopackApp.Build().Run();
+        { 
             ApplicationConfiguration.Initialize();
             POSAPP.UiLayoutService.Install();
 

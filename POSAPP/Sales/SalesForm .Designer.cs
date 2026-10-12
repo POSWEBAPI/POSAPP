@@ -153,7 +153,7 @@ namespace POSAPP
             // ══════════════════════════════════════════════════════════════════
             panelHeader.Dock = DockStyle.Top;
             panelHeader.Height = 44;
-            panelHeader.BackColor = Color.FromArgb(32, 35, 44);
+            panelHeader.BackColor = Color.FromArgb(20, 30, 50);
             panelHeader.Paint += new PaintEventHandler(panelHeader_Paint);
             panelHeader.MouseDown += new MouseEventHandler(panelHeader_MouseDown);
             panelHeader.MouseMove += new MouseEventHandler(panelHeader_MouseMove);
@@ -236,7 +236,7 @@ namespace POSAPP
                     Size = new Size(46, 44),
                     Anchor = AnchorStyles.None,
                     FlatStyle = FlatStyle.Flat,
-                    BackColor = Color.FromArgb(32, 35, 44),
+                    BackColor = Color.FromArgb(20, 30, 50),
                     ForeColor = Color.White,
                     Cursor = Cursors.Hand
                 };
@@ -285,7 +285,7 @@ namespace POSAPP
             // ══════════════════════════════════════════════════════════════════
             panelFooterBar.Dock = DockStyle.Bottom;
             panelFooterBar.Height = 58;
-            panelFooterBar.BackColor = Color.FromArgb(32, 35, 44);
+            panelFooterBar.BackColor = Color.FromArgb(20, 30, 50);
             panelFooterBar.Paint += new PaintEventHandler(panelFooterBar_Paint);
 
             btnTenderSale.Text = "💾  Save  (F1)";
@@ -486,7 +486,7 @@ namespace POSAPP
             lblGrandTotalBig.Text = "P 0.00";
             lblGrandTotalBig.Font = new Font("Segoe UI", 26F, FontStyle.Bold);
             lblGrandTotalBig.ForeColor = Color.FromArgb(52, 211, 153);
-            lblGrandTotalBig.BackColor = Color.FromArgb(28, 32, 42);
+            lblGrandTotalBig.BackColor = Color.FromArgb(18, 27, 46);
             lblGrandTotalBig.TextAlign = ContentAlignment.MiddleCenter;
 
             // ── Cart items panel — no extra padding so row content controls alignment ──
@@ -722,9 +722,9 @@ namespace POSAPP
                 return p;
             }
 
-            panelSplitCash = MakeSplitPanel("💵", "CASH", out lblCashTitle, out txtSplitCash, 30);
-            panelSplitUpi = MakeSplitPanel("📱", "Bank Transfer", out lblUpiTitle, out txtSplitUpi, 82);
-            panelSplitCard = MakeSplitPanel("💳", "CARD", out lblCardTitle, out txtSplitCard, 134);
+            panelSplitCash = MakeSplitPanel("💵", " ", out lblCashTitle, out txtSplitCash, 30);
+            panelSplitUpi = MakeSplitPanel("📱", "", out lblUpiTitle, out txtSplitUpi, 82);
+            panelSplitCard = MakeSplitPanel("💳", " ", out lblCardTitle, out txtSplitCard, 134);
 
             panelSplitCash.Click += new EventHandler(panelSplitCash_Click);
             panelSplitUpi.Click += new EventHandler(panelSplitUpi_Click);

@@ -385,7 +385,14 @@ namespace POSAPP
                 form.TopLevel = false;
                 form.FormBorderStyle = FormBorderStyle.None;
                 form.Dock = DockStyle.Fill;
-                form.FormClosed += (s, e) => ShowDashboardHome();
+
+                FormClosedEventHandler onClosed = null;
+                onClosed = (s, e) =>
+                {
+                    form.FormClosed -= onClosed;                 // no duplicate handlers
+                    if (_currentPage == form) ShowDashboardHome(); // only if it was the visible page
+                };
+                form.FormClosed += onClosed;
             }
             else
             {

@@ -65,64 +65,13 @@ namespace POSAPP
         {
             LoadLogo();
             BuildStatusCard();
-            lblShiftInfo.Text = $"Shift: Morning | Terminal ID: #01 | v{SimpleUpdater.Current}";
+            lblShiftInfo.Text = $"Shift: Morning | Terminal ID: #01  ";
             btnMaximize_Click(null, null);
 
-            //await CheckForUpdateAsync();
-
-            //if (!_updateInProgress)
-            //    _ = Task.Run(() => { try { new SyncService().SyncAll(); } catch { } });
+          
         }
 
-        private async Task CheckForUpdateAsync()
-        {
-            Version newVersion;
-            try
-            {
-                ShowStatus("Checking for updates", StatusType.Loading);
-                newVersion = await SimpleUpdater.CheckAsync();
-            }
-            catch
-            {
-                HideStatus();      // offline or server down: allow normal login
-                return;
-            }
-
-            if (newVersion == null) { HideStatus(); return; }
-
-            _updateInProgress = true;
-            SetLoginBusy(true);
-
-            while (true)
-            {
-                try
-                {
-                    ShowStatus($"Updating to v{newVersion}", StatusType.Loading);
-                    SimpleUpdater.OnProgress = p =>
-    ShowStatus($"Downloading v{newVersion} ({p}%)", StatusType.Loading);
-                    await SimpleUpdater.DownloadAndInstallAsync();
-                    return;
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine("Update failed: " + ex.Message);
-                    ShowStatus("Update failed", StatusType.Error);
-
-                    var r = MessageBox.Show(
-                        $"Version {newVersion} must be installed before you can log in.\n\n" +
-                        "The update failed. Check the internet connection and try again.",
-                        "Update Required",
-                        MessageBoxButtons.RetryCancel,
-                        MessageBoxIcon.Warning);
-
-                    if (r != DialogResult.Retry)
-                    {
-                        Application.Exit();
-                        return;
-                    }
-                }
-            }
-        } 
+     
         private void LoadLogo()
         {
             string[] names = { "logo.png", "shripos.png", "ShriPOS.png", "logo.jpg", "logo.jpeg" };

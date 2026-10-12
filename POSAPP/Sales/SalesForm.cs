@@ -34,10 +34,11 @@ namespace POSAPP
     public partial class SalesForm : Form
     {
         // ── Palette ────────────────────────────────────────────────────────────
-        private static readonly Color BgDark = Color.FromArgb(22, 24, 30);
-        private static readonly Color PanelDark = Color.FromArgb(32, 35, 44);
-        private static readonly Color PanelDark2 = Color.FromArgb(42, 46, 56);
-        private static readonly Color PanelDark3 = Color.FromArgb(38, 42, 52);
+        // ── Palette (navy-slate dark, matches the navy sidebar) ────────────────
+        private static readonly Color BgDark = Color.FromArgb(15, 23, 42);   // page
+        private static readonly Color PanelDark = Color.FromArgb(24, 34, 56);   // cards
+        private static readonly Color PanelDark2 = Color.FromArgb(30, 42, 66);   // alt row / tiles
+        private static readonly Color PanelDark3 = Color.FromArgb(27, 38, 61);   // alt row
         private static readonly Color AccGreen = Color.FromArgb(34, 197, 94);
         private static readonly Color AccBlue = Color.FromArgb(59, 130, 246);
         private static readonly Color AccOrange = Color.FromArgb(251, 146, 60);
@@ -45,11 +46,11 @@ namespace POSAPP
         private static readonly Color AccRed = Color.FromArgb(239, 68, 68);
         private static readonly Color AccCyan = Color.FromArgb(20, 184, 166);
         private static readonly Color AccYellow = Color.FromArgb(234, 179, 8);
-        private static readonly Color TextWhite = Color.FromArgb(240, 242, 246);
-        private static readonly Color TextMuted = Color.FromArgb(130, 140, 158);
+        private static readonly Color TextWhite = Color.FromArgb(241, 245, 249);
+        private static readonly Color TextMuted = Color.FromArgb(148, 163, 184);
         private static readonly Color TextGreen = Color.FromArgb(52, 211, 153);
-        private static readonly Color Border = Color.FromArgb(50, 54, 66);
-        private static readonly Color InputBg = Color.FromArgb(28, 32, 42);
+        private static readonly Color Border = Color.FromArgb(45, 60, 90);
+        private static readonly Color InputBg = Color.FromArgb(15, 23, 42);
 
         // ── State ──────────────────────────────────────────────────────────────
         private decimal _subtotal = 0m;
@@ -117,6 +118,7 @@ namespace POSAPP
         private System.Windows.Forms.Timer _searchDebounce;
         // ── Hot items tooltip ──────────────────────────────────────────────────────
         private ToolTip _hotItemsTooltip;
+        public event EventHandler ExitRequested;
         // ── Customer ───────────────────────────────────────────────────────────────
         // private string _customerAddressValue = "";
         private Panel _customerAddressWrapper;
@@ -167,6 +169,12 @@ namespace POSAPP
         private Button btnPrintLast;
         private List<SalesOrderApi.BankAccountDto> _bankAccounts = new();
         private SalesOrderApi.BankAccountDto _selectedBankAccount = null;
+        private List<PaymentTermDto> _paymentTerms = new();
+        private PaymentTermDto _selectedPaymentTerm = null;
+        private DateTime _deliveryDate = DateTime.Today;
+        private Panel _pnlOrderInfo;
+        private Label _lblPaymentTermValue, _lblDeliveryValue;
+        private ContextMenuStrip _termMenu;
 
         // ── Last sale reprint tracking ─────────────────────────────────────
         private ReceiptData _lastReceiptData = null;
@@ -258,6 +266,93 @@ namespace POSAPP
         private Panel _barcodeWrapper;
         private DayEndScheduler _scheduler;
         private Label lblNumpadDisplay;
+        // ── Busy overlay ─────────────────────────────────────────────────────────
+        private Panel _busyOverlay;
+        private Label _busyLabel;
+        private System.Windows.Forms.Timer _busyTimer;
+        private int _busyAngle, _busyCount;
+
+        private sealed class BusyScope : IDisposable
+        {
+            private SalesForm _owner;
+            public BusyScope(SalesForm owner) { _owner = owner; }
+            public void Dispose()
+            {
+                var o = _owner; _owner = null;      // safe to dispose twice
+                o?.HideBusy();
+            }
+        }
+
+        private void BuildBusyOverlay()
+        {
+            _busyOverlay = new Panel { Visible = false, Dock = DockStyle.Fill, Cursor = Cursors.WaitCursor };
+            typeof(Panel).GetProperty("DoubleBuffered",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                ?.SetValue(_busyOverlay, true);
+
+            _busyLabel = new Label();
+
+            _busyOverlay.Paint += (s, pe) =>
+            {
+                var g = pe.Graphics;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.Clear(Color.FromArgb(15, 23, 42));        // solid dim background
+
+                int w = 260, h = 150;
+                var card = new Rectangle((_busyOverlay.Width - w) / 2, (_busyOverlay.Height - h) / 2, w, h);
+                using (var path = RoundedPath(card, 14))
+                using (var fill = new SolidBrush(Color.FromArgb(30, 38, 58)))
+                using (var pen = new Pen(Color.FromArgb(60, 78, 112), 1.5f))
+                { g.FillPath(fill, path); g.DrawPath(pen, path); }
+
+                // spinner: 12 fading dots
+                int cx = card.X + w / 2, cy = card.Y + 52, r = 20;
+                for (int i = 0; i < 12; i++)
+                {
+                    double a = (i * 30 + _busyAngle) * Math.PI / 180.0;
+                    int alpha = 40 + (int)(215 * ((12 - i) / 12.0));
+                    using var b = new SolidBrush(Color.FromArgb(alpha, AccGreen));
+                    g.FillEllipse(b, (float)(cx + Math.Cos(a) * r) - 3.5f, (float)(cy + Math.Sin(a) * r) - 3.5f, 7, 7);
+                }
+
+                using var f = new Font("Segoe UI", 10F, FontStyle.Bold);
+                TextRenderer.DrawText(g, _busyLabel.Text, f,
+                    new Rectangle(card.X, card.Y + 92, w, 36), TextWhite,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            };
+
+            _busyTimer = new System.Windows.Forms.Timer { Interval = 40 };
+            _busyTimer.Tick += (s, e) => { _busyAngle = (_busyAngle + 30) % 360; _busyOverlay.Invalidate(); };
+
+            this.Controls.Add(_busyOverlay);
+        }
+
+        private IDisposable ShowBusy(string message = "Processing…")
+        {
+            if (this.InvokeRequired)
+                return (IDisposable)this.Invoke(new Func<IDisposable>(() => ShowBusy(message)));
+
+            if (_busyOverlay == null) BuildBusyOverlay();
+            _busyCount++;
+            _busyLabel.Text = message;
+            _busyOverlay.Visible = true;
+            _busyOverlay.BringToFront();
+            _busyTimer.Start();
+            _busyOverlay.Update();            // paint immediately, before the slow work starts
+            return new BusyScope(this);
+        }
+
+        private void HideBusy()
+        {
+            if (this.IsDisposed) return;
+            if (this.InvokeRequired) { this.BeginInvoke(new Action(HideBusy)); return; }
+            if (_busyCount > 0) _busyCount--;
+            if (_busyCount == 0 && _busyOverlay != null)
+            {
+                _busyTimer.Stop();
+                _busyOverlay.Visible = false;
+            }
+        }
 
         // ── DB path ───────────────────────────────────────────────────────────
         private static readonly string _dbPath =
@@ -301,15 +396,7 @@ namespace POSAPP
         // ══════════════════════════════════════════════════════════════════════
         private async void SalesForm_Load(object sender, EventArgs e)
         {
-
-            //if (IsEmbedded)
-            //{
-            //    panelHeader.Visible = false;
-            //    tblRoot.Dock = DockStyle.Fill;   // reclaim the header's vertical space
-            //                                     // Move the search/barcode boxes into the search card instead, since
-            //                                     // there's no header bar to host them when embedded
-            //    MoveSearchControlsIntoLeftPanel();
-            //}
+ 
             SalesOrderApi.BaseUrl = ApiBaseUrl;
             lblOperator.Text = "ADMIN";
             POSAPP.Printer.StockSettings.Load();
@@ -319,20 +406,11 @@ namespace POSAPP
             {
                 BuildAutocomplete();
                 BuildHotItems();
-                SetD365Mode(true);
-
-
-                // ENSURE invoice label matches mode after products load
+                SetD365Mode(true); 
                 if (lblInvoiceNo.Text.StartsWith("INV-"))
                     lblInvoiceNo.Text = "";   // ← ADD THIS
             }));
-
-            // BuildHotItems() lays out its grid using panelHotItems.ClientSize.Width
-            // at call time, but the cards it creates are plain Top|Left-anchored
-            // panels, so they don't reflow on their own when the left column is
-            // resized (e.g. dragging/maximizing the window). Debounce a rebuild
-            // on resize so the grid stays correctly columned at any width,
-            // without rebuilding on every intermediate pixel while dragging.
+             
             int lastHotItemsWidth = panelHotItems.ClientSize.Width;
             var hotItemsResizeDebounce = new System.Windows.Forms.Timer { Interval = 150 };
             hotItemsResizeDebounce.Tick += (s, ev) =>
@@ -374,6 +452,7 @@ namespace POSAPP
             _ = LoadStockCacheAsync();
             _ = LoadUomMasterAsync();
             _ = LoadTaxMasterAsync();
+            _ = LoadPaymentTermsAsync();
             _ = LoadChargesMasterAsync();
             _ = LoadBankAccountsAsync();
             BuildCustomerSelectDropdown();
@@ -423,6 +502,7 @@ namespace POSAPP
             UpdateTotals();
             BuildGrandTotalBigLabel();
             BuildStockReductionLabel();
+            BuildPaymentTermAndDeliveryControls();
             RepositionTitleButtons();
             panelCentre.SizeChanged += (s, ev) => RepositionTitleButtons();
             panelLeft.Resize += (s, e) =>
@@ -483,8 +563,8 @@ namespace POSAPP
             {
                 Text = "🖨  Reprint",
                 Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
-                ForeColor = Color.FromArgb(200, 200, 200),
-                BackColor = Color.FromArgb(55, 60, 78),
+                ForeColor = Color.FromArgb(203, 213, 225),
+                BackColor = Color.FromArgb(38, 52, 80),
                 FlatStyle = FlatStyle.Flat,
                 Size = new Size(104, 28),
                 Cursor = Cursors.Hand,
@@ -515,6 +595,38 @@ namespace POSAPP
         // ══════════════════════════════════════════════════════════════════════
         private enum AlertKind { Error, Warning, Info, Success }
 
+        private async Task LoadPaymentTermsAsync()
+        {
+            try
+            {
+                using var http = CreateAuthedClient(TimeSpan.FromSeconds(15));
+                // ⚠ adjust the route to whatever getPaymentTerms() hits in paymentTermApi.js
+                var resp = await http.GetAsync($"{ApiBaseUrl}/api/PaymentTerm/getall").ConfigureAwait(false);
+                if (!resp.IsSuccessStatusCode) return;
+
+                string json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+                JsonElement root = JsonSerializer.Deserialize<JsonElement>(json);
+                JsonElement arr = root.ValueKind == JsonValueKind.Object && root.TryGetProperty("data", out var d) ? d : root;
+                if (arr.ValueKind != JsonValueKind.Array) return;
+
+                var list = new List<PaymentTermDto>();
+                foreach (var row in arr.EnumerateArray())
+                {
+                    int id = (int)GetDecProp(row, "paymentTermID", "paymentTermId", "id");
+                    string name = GetStrProp(row, "description", "paymentTermName", "termName", "name");
+                    if (id > 0 && !string.IsNullOrWhiteSpace(name))
+                        list.Add(new PaymentTermDto { PaymentTermID = id, Description = name });
+                }
+
+                _paymentTerms = list; 
+            }
+            catch (Exception ex) { Debug.WriteLine("LoadPaymentTermsAsync: " + ex.Message); }
+        }
+       
+        
+         
+
+        
         private void ShowAlert(string title, string message, AlertKind kind = AlertKind.Warning)
         {
             if (this.InvokeRequired) { this.Invoke(new Action(() => ShowAlert(title, message, kind))); return; }
@@ -858,10 +970,40 @@ namespace POSAPP
             decimal total = _charges.Sum(c => c.Amount);
             btnCharges.Text = _charges.Count == 0 ? "➕ Charges"
                 : (_chargesAllocated ? $"✓ Charges {Fmt(total)}" : $"⚠ Charges {Fmt(total)}");
-            btnCharges.BackColor = _charges.Count == 0 ? Color.FromArgb(55, 60, 78)
+            btnCharges.BackColor = _charges.Count == 0 ? Color.FromArgb(38, 52, 80)
                 : (_chargesAllocated ? AccGreen : AccOrange);
+            btnCharges.ForeColor = Color.White;
         }
-        
+
+        private void RefreshSaleTypeToggleVisual()
+        {
+            if (_btnNormalSaleToggle == null || _btnCreditSaleToggle == null) return;
+            Color off = Color.FromArgb(18, 27, 46);
+
+            if (_isCreditSale)
+            {
+                _btnCreditSaleToggle.BackColor = AccPurple; _lblCreditSaleToggle.ForeColor = Color.White;
+                _btnNormalSaleToggle.BackColor = off; _lblNormalSaleToggle.ForeColor = TextMuted;
+            }
+            else
+            {
+                _btnNormalSaleToggle.BackColor = AccGreen; _lblNormalSaleToggle.ForeColor = Color.White;
+                _btnCreditSaleToggle.BackColor = off; _lblCreditSaleToggle.ForeColor = TextMuted;
+            }
+        }
+
+        private void StyleDialog(Form dlg, int radius = 14)
+        {
+            dlg.Region = MakeRoundedRegion(dlg.ClientSize, radius + 2);
+            dlg.Paint += (s, pe) =>
+            {
+                pe.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                using var pen = new Pen(Color.FromArgb(60, 78, 112), 1.5f);
+                using var path = RoundedPath(new Rectangle(0, 0, dlg.Width - 1, dlg.Height - 1), radius);
+                pe.Graphics.DrawPath(pen, path);
+            };
+        }
+
         private Dictionary<string, int> _nameToItemId = new(StringComparer.OrdinalIgnoreCase);
 
         private async Task LoadBankAccountsAsync()
@@ -1092,28 +1234,390 @@ namespace POSAPP
                     panelHotItems.Top += delta;
                     panelHotItems.Height = Math.Max(60, panelHotItems.Height - delta);
                 }
-            }
+            }   
         }
-
-        private void RefreshSaleTypeToggleVisual()
+        private void BuildPaymentTermAndDeliveryControls()
         {
-            if (_btnNormalSaleToggle == null || _btnCreditSaleToggle == null) return;
+            if (_pnlOrderInfo != null) return;
+            var host = panelTotalsCard?.Parent;          // panelRight
+            if (host == null) return;
+            float k = this.DeviceDpi / 96f;
+            _pnlOrderInfo = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = (int)(98 * k),
+                BackColor = PanelDark,
+                Padding = new Padding(12, 10, 12, 12)
+            };
+            _pnlOrderInfo.Paint += PaintDarkCard;
 
-            if (_isCreditSale)
+            var title = new Label
             {
-                _btnCreditSaleToggle.BackColor = AccPurple;
-                _lblCreditSaleToggle.ForeColor = Color.White;
-                _btnNormalSaleToggle.BackColor = Color.FromArgb(20, 22, 28);
-                _lblNormalSaleToggle.ForeColor = TextMuted;
-            }
-            else
+                Text = "ORDER DETAILS",
+                Font = new Font("Segoe UI", 7.5F, FontStyle.Bold),
+                ForeColor = TextMuted,
+                BackColor = Color.Transparent,
+                AutoSize = false,
+                Dock = DockStyle.Top,
+                Height = 18,
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+
+            var tbl = new TableLayoutPanel
             {
-                _btnNormalSaleToggle.BackColor = AccGreen;
-                _lblNormalSaleToggle.ForeColor = Color.White;
-                _btnCreditSaleToggle.BackColor = Color.FromArgb(20, 22, 28);
-                _lblCreditSaleToggle.ForeColor = TextMuted;
-            }
+                Dock = DockStyle.Fill,
+                BackColor = Color.Transparent,
+                ColumnCount = 2,
+                RowCount = 1
+            };
+            tbl.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            tbl.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            tbl.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+            var termCell = BuildPickerField("PAYMENT TERM", "🧾", AccPurple,
+                out _lblPaymentTermValue, ShowPaymentTermMenu);
+            var dateCell = BuildPickerField("DELIVERY DATE", "📅", AccBlue,
+                out _lblDeliveryValue, ShowDeliveryCalendar);
+            termCell.Margin = new Padding(0, 0, 6, 0);
+            dateCell.Margin = new Padding(6, 0, 0, 0);
+            tbl.Controls.Add(termCell, 0, 0);
+            tbl.Controls.Add(dateCell, 1, 0);
+
+            _pnlOrderInfo.Controls.Add(tbl);     // Fill
+            _pnlOrderInfo.Controls.Add(title);   // Top
+
+            // Put the card directly BELOW the totals card in dock order
+            int totalsIdx = host.Controls.GetChildIndex(panelTotalsCard);
+            host.Controls.Add(_pnlOrderInfo);
+            host.Controls.SetChildIndex(_pnlOrderInfo, totalsIdx);
+
+            SetDeliveryDate(_deliveryDate);
+            UpdatePaymentTermLabel();
         }
+
+        // ── Reusable "caption + dark rounded picker box" ───────────────────────────
+        private Control BuildPickerField(string caption, string icon, Color accent,
+                                   out Label valueLbl, Action<Control> onClick)
+        {
+            float k = this.DeviceDpi / 96f;
+            int S(int v) => (int)Math.Round(v * k);
+
+            var cell = new Panel { Dock = DockStyle.Fill, BackColor = Color.Transparent };
+
+            var cap = new Label
+            {
+                Text = caption,
+                Font = new Font("Segoe UI", 7F, FontStyle.Bold),
+                ForeColor = TextMuted,
+                BackColor = Color.Transparent,
+                AutoSize = false,
+                AutoEllipsis = false,
+                Dock = DockStyle.Top,
+                Height = S(16),
+                TextAlign = ContentAlignment.BottomLeft
+            };
+
+            var box = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = S(36),
+                BackColor = InputBg,
+                Cursor = Cursors.Hand
+            };
+            bool hot = false;
+            box.SizeChanged += (s, e) =>
+            {
+                box.Region?.Dispose();
+                if (box.Width > 0 && box.Height > 0)
+                    box.Region = MakeRoundedRegion(box.Size, 8);
+            };
+            box.Paint += (s, pe) =>
+            {
+                pe.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                using var pen = new Pen(hot ? accent : Border, hot ? 1.8f : 1f);
+                using var path = RoundedPath(new Rectangle(1, 1, box.Width - 3, box.Height - 3), 8);
+                pe.Graphics.DrawPath(pen, path);
+            };
+
+            var val = new Label
+            {
+                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
+                ForeColor = TextWhite,
+                BackColor = Color.Transparent,
+                AutoSize = false,
+                AutoEllipsis = true,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Cursor = Cursors.Hand
+            };
+            var ico = new Label
+            {
+                Text = icon,
+                Font = new Font("Segoe UI Emoji", 10F),
+                ForeColor = accent,
+                BackColor = Color.Transparent,
+                AutoSize = false,
+                AutoEllipsis = false,
+                UseCompatibleTextRendering = false,
+                Dock = DockStyle.Left,
+                Width = S(34),
+                TextAlign = ContentAlignment.MiddleCenter,
+                Cursor = Cursors.Hand
+            };
+            var chev = new Label
+            {
+                Text = "▾",
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+                ForeColor = TextMuted,
+                BackColor = Color.Transparent,
+                AutoSize = false,
+                AutoEllipsis = false,
+                UseCompatibleTextRendering = false,
+                Dock = DockStyle.Right,
+                Width = S(28),
+                TextAlign = ContentAlignment.MiddleCenter,
+                Cursor = Cursors.Hand
+            };
+
+            box.Controls.Add(val);    // Fill – added first, laid out last
+            box.Controls.Add(ico);
+            box.Controls.Add(chev);
+
+            void SetHot(bool on) { hot = on; box.Invalidate(); }
+            foreach (Control c in new Control[] { box, val, ico, chev })
+            {
+                c.MouseEnter += (s, e) => SetHot(true);
+                c.MouseLeave += (s, e) => SetHot(box.ClientRectangle.Contains(box.PointToClient(Cursor.Position)));
+                c.Click += (s, e) => onClick(box);
+            }
+
+            cell.Controls.Add(box);   // added first
+            cell.Controls.Add(cap);   // added last, so it docks at the very top
+            valueLbl = val;
+            return cell;
+        }
+
+        // ── Payment term dropdown (dark) ───────────────────────────────────────────
+        private void ShowPaymentTermMenu(Control anchor)
+        {
+            _termMenu?.Dispose();
+            _termMenu = new ContextMenuStrip
+            {
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+                ShowImageMargin = false,
+                ShowCheckMargin = false,
+                Renderer = new ToolStripProfessionalRenderer(new DarkMenuColors()) { RoundedEdges = false },
+                BackColor = Color.FromArgb(24, 34, 56),
+                ForeColor = TextWhite,
+                MinimumSize = new Size(anchor.Width, 0)
+            };
+
+            void AddItem(string text, PaymentTermDto term)
+            {
+                bool selected = (term == null && _selectedPaymentTerm == null)
+                             || (term != null && _selectedPaymentTerm?.PaymentTermID == term.PaymentTermID);
+                var it = new ToolStripMenuItem((selected ? "✓  " : "     ") + text)
+                {
+                    ForeColor = term == null ? TextMuted : TextWhite,
+                    BackColor = Color.FromArgb(24, 34, 56),
+                    Padding = new Padding(4, 6, 4, 6)
+                };
+                it.Click += (s, e) => { _selectedPaymentTerm = term; UpdatePaymentTermLabel(); };
+                _termMenu.Items.Add(it);
+            }
+
+            AddItem("— None —", null);
+            foreach (var t in _paymentTerms) AddItem(t.Description, t);
+
+            _termMenu.Show(anchor, new Point(0, anchor.Height + 2));
+        }
+
+        private class DarkMenuColors : ProfessionalColorTable
+        {
+            public override Color ToolStripDropDownBackground => Color.FromArgb(24, 34, 56);
+            public override Color ImageMarginGradientBegin => Color.FromArgb(24, 34, 56);
+            public override Color ImageMarginGradientMiddle => Color.FromArgb(24, 34, 56);
+            public override Color ImageMarginGradientEnd => Color.FromArgb(24, 34, 56);
+            public override Color MenuItemSelected => Color.FromArgb(45, 110, 255);
+            public override Color MenuItemBorder => Color.FromArgb(45, 110, 255);
+            public override Color MenuBorder => Color.FromArgb(45, 60, 90);
+        }
+
+        // ── Delivery date calendar popup ───────────────────────────────────────────
+        private class BufferedPanel : Panel
+        {
+            public BufferedPanel() { DoubleBuffered = true; }
+        }
+
+        private void ShowDeliveryCalendar(Control anchor)
+        {
+            float k = this.DeviceDpi / 96f;
+            int S(int v) => (int)Math.Round(v * k);
+
+            int pad = S(10), headH = S(36), dowH = S(24), cell = S(34);
+            DateTime today = DateTime.Today;
+            DateTime shown = new DateTime(_deliveryDate.Year, _deliveryDate.Month, 1);
+            int hover = -1;
+            Color bg = Color.FromArgb(24, 34, 56);
+
+            var pnl = new BufferedPanel
+            {
+                BackColor = bg,
+                Size = new Size(pad * 2 + cell * 7, pad * 2 + headH + dowH + cell * 6)
+            };
+
+            // AutoClose = closes on any outside click / Esc, never on hover
+            var dd = new ToolStripDropDown
+            {
+                AutoClose = true,
+                Padding = Padding.Empty,
+                Margin = Padding.Empty,
+                BackColor = bg,
+                Renderer = new ToolStripProfessionalRenderer(new DarkMenuColors()) { RoundedEdges = false }
+            };
+            var host = new ToolStripControlHost(pnl)
+            {
+                Margin = Padding.Empty,
+                Padding = Padding.Empty,
+                AutoSize = false,
+                Size = pnl.Size
+            };
+            dd.Items.Add(host);
+
+            Rectangle PrevRect() => new Rectangle(pad, pad, S(36), headH);
+            Rectangle NextRect() => new Rectangle(pnl.Width - pad - S(36), pad, S(36), headH);
+            int GridTop() => pad + headH + dowH;
+            DateTime GridStart() => shown.AddDays(-(int)shown.DayOfWeek);
+
+            int HitCell(Point p)
+            {
+                int x = p.X - pad, y = p.Y - GridTop();
+                if (x < 0 || y < 0) return -1;
+                int c = x / cell, r = y / cell;
+                if (c > 6 || r > 5) return -1;
+                return r * 7 + c;
+            }
+            bool Selectable(DateTime d) => d.Month == shown.Month && d >= today;
+
+            pnl.Paint += (s, pe) =>
+            {
+                var g = pe.Graphics;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+
+                using var center = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+                using var hFont = new Font("Segoe UI", 10.5F, FontStyle.Bold);
+                using var dFont = new Font("Segoe UI", 9F, FontStyle.Bold);
+                using var wFont = new Font("Segoe UI", 8F, FontStyle.Bold);
+                using var aFont = new Font("Segoe UI", 14F, FontStyle.Bold);
+
+                using (var pen = new Pen(Border, 1f))
+                    g.DrawRectangle(pen, 0, 0, pnl.Width - 1, pnl.Height - 1);
+
+                var title = new Rectangle(pad + S(36), pad, pnl.Width - pad * 2 - S(72), headH);
+                using (var b = new SolidBrush(TextWhite))
+                    g.DrawString(shown.ToString("MMMM yyyy"), hFont, b, title, center);
+
+                bool canPrev = shown > new DateTime(today.Year, today.Month, 1);
+                using (var bp = new SolidBrush(canPrev ? TextWhite : Color.FromArgb(70, 80, 100)))
+                    g.DrawString("‹", aFont, bp, PrevRect(), center);
+                using (var bn = new SolidBrush(TextWhite))
+                    g.DrawString("›", aFont, bn, NextRect(), center);
+
+                string[] dow = { "Su", "Mo", "Tu", "We", "Th", "Fr", "Sa" };
+                using (var b = new SolidBrush(TextMuted))
+                    for (int c = 0; c < 7; c++)
+                        g.DrawString(dow[c], wFont, b,
+                            new Rectangle(pad + c * cell, pad + headH, cell, dowH), center);
+
+                DateTime start = GridStart();
+                for (int i = 0; i < 42; i++)
+                {
+                    DateTime d = start.AddDays(i);
+                    if (d.Month != shown.Month) continue;
+
+                    var r = new Rectangle(pad + (i % 7) * cell + 2, GridTop() + (i / 7) * cell + 2, cell - 4, cell - 4);
+                    bool ok = Selectable(d);
+                    bool sel = d == _deliveryDate;
+
+                    if (sel)
+                        using (var b = new SolidBrush(AccBlue))
+                        using (var path = RoundedPath(r, S(7)))
+                            g.FillPath(b, path);
+                    else if (ok && i == hover)
+                        using (var b = new SolidBrush(Color.FromArgb(45, 60, 95)))
+                        using (var path = RoundedPath(r, S(7)))
+                            g.FillPath(b, path);
+
+                    if (d == today && !sel)
+                        using (var pen = new Pen(AccBlue, 1.5f))
+                        using (var path = RoundedPath(r, S(7)))
+                            g.DrawPath(pen, path);
+
+                    using var fb = new SolidBrush(sel ? Color.White : ok ? TextWhite : Color.FromArgb(75, 85, 105));
+                    g.DrawString(d.Day.ToString(), dFont, fb, r, center);
+                }
+            };
+
+            pnl.MouseMove += (s, e) =>
+            {
+                int h = HitCell(e.Location);
+                bool overArrow = PrevRect().Contains(e.Location) || NextRect().Contains(e.Location);
+                pnl.Cursor = (overArrow || (h >= 0 && Selectable(GridStart().AddDays(h)))) ? Cursors.Hand : Cursors.Default;
+                if (h != hover) { hover = h; pnl.Invalidate(); }
+            };
+            pnl.MouseLeave += (s, e) => { hover = -1; pnl.Invalidate(); };
+
+            pnl.MouseClick += (s, e) =>
+            {
+                if (PrevRect().Contains(e.Location))
+                {
+                    var prev = shown.AddMonths(-1);
+                    if (prev >= new DateTime(today.Year, today.Month, 1)) { shown = prev; pnl.Invalidate(); }
+                    return;
+                }
+                if (NextRect().Contains(e.Location)) { shown = shown.AddMonths(1); pnl.Invalidate(); return; }
+
+                int h = HitCell(e.Location);
+                if (h < 0) return;
+                DateTime d = GridStart().AddDays(h);
+                if (!Selectable(d)) return;
+
+                SetDeliveryDate(d);
+                dd.Close();
+            };
+
+            // opens directly below the Delivery Date box
+            dd.Show(anchor, new Point(0, anchor.Height + 2));
+        }
+
+        private void SetDeliveryDate(DateTime d)
+        {
+            _deliveryDate = d.Date;
+            if (_lblDeliveryValue != null)
+                _lblDeliveryValue.Text = _deliveryDate.ToString("dd MMM yyyy");
+        }
+
+        private void UpdatePaymentTermLabel()
+        {
+            if (_lblPaymentTermValue == null) return;
+            _lblPaymentTermValue.Text = _selectedPaymentTerm?.Description ?? "Select term";
+            _lblPaymentTermValue.ForeColor = _selectedPaymentTerm == null ? TextMuted : TextWhite;
+        }
+
+        private void PopulatePaymentTermCombo()   // name kept: LoadPaymentTermsAsync already calls it
+        {
+            if (_selectedPaymentTerm != null)
+                _selectedPaymentTerm = _paymentTerms.FirstOrDefault(t => t.PaymentTermID == _selectedPaymentTerm.PaymentTermID);
+            UpdatePaymentTermLabel();
+        }
+
+        private void SelectPaymentTermById(int id)
+        {
+            _selectedPaymentTerm = id > 0 ? _paymentTerms.FirstOrDefault(t => t.PaymentTermID == id) : null;
+            UpdatePaymentTermLabel();
+        }
+
 
         private void SetCreditSaleMode(bool creditSale)
         {
@@ -2633,6 +3137,8 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             _selectedCustomer = c;
             _customerNameValue = c.CustomerName;
             _customerAddressValue = c.Address;
+
+            SelectPaymentTermById(c.PaymentTermID);
 
             ShowStatus($"👤 Customer: {c.CustomerName}", true);
         }
@@ -4455,7 +4961,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
 
             panelHotItems.AutoScroll = true;
             panelHotItems.Padding = new Padding(4, 4, 4, 4);
-            panelHotItems.BackColor = Color.FromArgb(22, 24, 30);
+            panelHotItems.BackColor = PanelDark;
 
             // Dispose old tooltip
             _hotItemsTooltip?.Dispose();
@@ -4576,7 +5082,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 // ── Hover effect ──────────────────────────────────────────────
                 void SetHover(bool on)
                 {
-                    card.BackColor = on ? Color.FromArgb(44, 48, 62) : Color.FromArgb(32, 35, 44);
+                    card.BackColor = on ? Color.FromArgb(40, 55, 85) : PanelDark2;
                     bar.BackColor = on ? ControlPaint.Light(accent, 0.1f) : accent;
                 }
 
@@ -7085,25 +7591,20 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
 
 
 
-        // AFTER
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
-            bool inTextBox = txtSearch.Focused || txtCustomer.Focused;//| txtBarcode.Focused
+            bool inTextBox = txtSearch.Focused || txtCustomer.Focused;
             if (!inTextBox)
             {
                 if (keyData == Keys.F8) { OpenFloatManager(); return true; }
             }
-            if (keyData == Keys.Escape) { this.Close(); return true; }
+            if (keyData == Keys.Escape) { ExitToDashboard(); return true; }
             if (keyData == Keys.F1)
             {
-                // Always forward to the click handler — it has its own guards
-                // (empty cart, already-processing) and will show status messages
-                // if it can't proceed. Don't silently swallow F1 here.
                 btnTenderSale_Click(null, null);
                 return true;
             }
             if (keyData == Keys.F5) { txtSearch.Focus(); return true; }
-           // if (keyData == Keys.F6) { txtBarcode.Focus(); return true; }
             return base.ProcessCmdKey(ref msg, keyData);
         }
 
@@ -7427,7 +7928,9 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                     CompanyID = _companyId,
                     StoreID = _storeId,
                     CustomerId = customerId,
-                    PaymentTermID = 0,
+                    PaymentTermID = _selectedPaymentTerm?.PaymentTermID ?? 0,
+
+                    DeliveryDate = DateTime.SpecifyKind(_deliveryDate.Date, DateTimeKind.Utc),
                     SOAmount = (int)Math.Round(grandTotal, MidpointRounding.AwayFromZero),
                     Currency = string.IsNullOrWhiteSpace(_currencySymbol) ? "P" : _currencySymbol,
                     SOType = "Sales Order",
@@ -7438,7 +7941,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                     SODiscountID = 0,
                     SOTaxID = _selectedTax?.TaxId ?? 0,
                     DeliveryAddress = string.IsNullOrWhiteSpace(_customerAddressValue) ? "N/A" : _customerAddressValue,
-                    DeliveryDate = DateTime.Now,
+                  
                     Status = "Confirm",
                     WinPos="Y",
                     Lines = lines,
@@ -7745,9 +8248,9 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 return t;
             }
 
-            var tileCash = MakeTile("💵", "CASH", AccGreen, MARGIN);
-            var tileUpi = MakeTile("🏦", "BANK", AccBlue, MARGIN + tileW + TILE_GAP);
-            var tileCard = MakeTile("💳", "CARD", AccPurple, MARGIN + (tileW + TILE_GAP) * 2);
+            var tileCash = MakeTile("💵", "CASH · F2", AccGreen, MARGIN);
+            var tileUpi = MakeTile("🏦", "BANK · F3", AccBlue, MARGIN + tileW + TILE_GAP);
+            var tileCard = MakeTile("💳", "CARD · F4", AccPurple, MARGIN + (tileW + TILE_GAP) * 2);
             dlg.Controls.AddRange(new Control[] { tileCash, tileUpi, tileCard });
             y = tileY + TILE_H + 20;
 
@@ -7755,7 +8258,8 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             int bankBlockTop = y;
             var lblBankCaption = new Label
             {
-                Text = "Bank Account",
+                // Bank caption
+                Text = "Bank Account  (F6)",
                 Font = new Font("Segoe UI", 8F, FontStyle.Bold),
                 ForeColor = TextMuted,
                 BackColor = Color.Transparent,
@@ -7880,7 +8384,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             };
             var lblExact = new Label
             {
-                Text = "Fill Exact Remaining",
+                Text = "Fill Exact Remaining  (F7)",
                 Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
                 ForeColor = TextMuted,
                 BackColor = Color.Transparent,
@@ -7911,7 +8415,8 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             // ── Confirm ──────────────────────────────────────────────────────────
             var btnConfirm = new Button
             {
-                Text = "Confirm Payment",
+                // Confirm button
+                Text = "Confirm Payment  (F9)",
                 Font = new Font("Segoe UI", 10.5F, FontStyle.Bold),
                 ForeColor = Color.White,
                 BackColor = AccGreen,
@@ -8070,10 +8575,66 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
 
             dlg.KeyDown += (s, e) =>
             {
-                if (e.KeyCode == Keys.Escape)
+                // Ctrl+Enter = confirm
+                if (e.Control && e.KeyCode == Keys.Enter)
                 {
                     e.Handled = true;
-                    dlg.Close();
+                    e.SuppressKeyPress = true;
+                    if (btnConfirm.Enabled) btnConfirm.PerformClick();
+                    return;
+                }
+
+                switch (e.KeyCode)
+                {
+                    case Keys.Escape:
+                        e.Handled = true;
+                        e.SuppressKeyPress = true;
+                        dlg.Close();
+                        break;
+
+                    case Keys.F2:
+                        e.Handled = true;
+                        e.SuppressKeyPress = true;
+                        SelectMethod("cash");
+                        break;
+
+                    case Keys.F3:
+                        e.Handled = true;
+                        e.SuppressKeyPress = true;
+                        SelectMethod("upi");
+                        break;
+
+                    case Keys.F4:
+                        e.Handled = true;
+                        e.SuppressKeyPress = true;
+                        SelectMethod("card");
+                        break;
+
+                    case Keys.F6:   // open bank dropdown
+                        e.Handled = true;
+                        e.SuppressKeyPress = true;
+                        if (localActive != "upi") SelectMethod("upi");   // switch to Bank first so the combo is visible
+                        if (cmbBank.Visible && cmbBank.Enabled && cmbBank.Items.Count > 0)
+                        {
+                            if (cmbBank.SelectedIndex < 0) cmbBank.SelectedIndex = 0;
+                            cmbBank.Focus();
+                            cmbBank.DroppedDown = true;
+                        }
+                        break;
+
+                    case Keys.F7:
+                        e.Handled = true;
+                        e.SuppressKeyPress = true;
+                        exactClick(null, EventArgs.Empty);
+                        txtAmount.Focus();
+                        txtAmount.SelectAll();
+                        break;
+
+                    case Keys.F9:   // confirm payment
+                        e.Handled = true;
+                        e.SuppressKeyPress = true;
+                        if (btnConfirm.Enabled) btnConfirm.PerformClick();
+                        break;
                 }
             };
 
@@ -8124,17 +8685,21 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
         {
             if (_cart.Count == 0) { ShowStatus("Cart is empty.", false); return; }
 
+
+
             if (_isTendering)
             {
                 ShowStatus("⏳ Still processing the previous sale — please wait.", false);
                 return;
             }
+
             _isTendering = true;
 
             if (btnTenderSale != null) btnTenderSale.Enabled = false;
             string originalBtnText = btnTenderSale?.Text ?? "✅  Tender Sale  (F1)";
             if (btnTenderSale != null) btnTenderSale.Text = "⏳  Processing…";
             this.Cursor = Cursors.WaitCursor;
+            IDisposable busy = null;
 
             try
             {
@@ -8153,6 +8718,16 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                     RefreshChargesButtonLabel();
                     RefreshCart();
                     UpdateTotals();
+                }
+                if (_deliveryDate.Date < DateTime.Today)
+                {
+                    ShowStatus("⛔ Delivery date cannot be in the past.", false);
+                    return;
+                }
+                if (_isCreditSale && _selectedPaymentTerm == null)
+                {
+                    ShowStatus("⛔ Select a Payment Term for a credit sale.", false);
+                    return;
                 }
                 // ── Final stock validation before tendering ─────────────────────────
                 var overStockItems = new List<string>();
@@ -8210,6 +8785,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                         return;
                     }
                 }
+                busy = ShowBusy("Processing sale…");
 
                 decimal splitSum = _isCreditSale ? 0m : _splitCash + _splitUpi + _splitCard;
                 decimal change = _isCreditSale ? 0m : splitSum - grandTotal;
@@ -8399,8 +8975,10 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
 
                 _lastReceiptData = receiptData;
                 _lastSaleWasPrinted = false;
+                busy?.Dispose(); busy = null;
 
                 bool wantsPrint = ShowPrintConfirmDialog(postedInvoiceNo, grandTotal);
+                bool goToDashboard = false;
 
                 if (wantsPrint)
                 {
@@ -8416,10 +8994,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                                 this.BeginInvoke(new Action(() => ShowStatus("⚠ " + drawerMsg, false)));
                         });
                     }
-                    else if (_lastSaleWasPrinted)
-                    {
-                        Debug.WriteLine("CashDrawer: no drawer detected — skipping auto-open.");
-                    }
+                    goToDashboard = true;                      // printed → back to dashboard
                 }
                 else
                 {
@@ -8427,9 +9002,11 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                     ShowStatus($"✓ Sale {postedInvoiceNo} saved — not printed.", true);
                 }
 
-                ResetSale(generateNewInvoiceNo: true);
+                ResetSale(generateNewInvoiceNo: true);          // always clear the screen
                 DashboardEventBus.Notify();
-                this.Close();
+
+                if (goToDashboard) ExitToDashboard();                // Yes, Print → dashboard
+                else FocusSearchBox();                          // No, Thanks → stay on a fresh sale
             }
             finally
             {
@@ -8836,7 +9413,6 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
         //        ResetSale();
         //}
 
-        // ── In ResetSale() — hide and disable button when sale resets ─────
         private void ResetSale(bool generateNewInvoiceNo = true)
         {
             bool comingFromPending = _wasCompletedFromPendingInvoice;
@@ -8851,16 +9427,22 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             _selectedBankAccount = null;
             _isCreditSale = false;
             RefreshSaleTypeToggleVisual();
-            // in ResetSale(), near where _selectedUpiMethodName / _cardRefNumber are reset:
-            if (!string.IsNullOrWhiteSpace(lblInvoiceNo.Text))
-                PendingSalesOrderCache.Cache.Remove(lblInvoiceNo.Text);
+
+            //if (!string.IsNullOrWhiteSpace(lblInvoiceNo.Text))
+            //    PendingSalesOrderCache.Cache.Remove(lblInvoiceNo.Text);
 
             _isPendingInvoiceMode = false;
             _taxAlreadyIncluded = false;
-            // ── Hide Customer Details button on reset ──────────────────────
+
+            // ── Customer: reset to default, keep the dropdown visible ──
+            _customerNameValue = "";
+            _customerAddressValue = "";
+            _customerVatValue = "";
+            _customerDiscountPct = 0m;
+
             if (_cmbCustomer != null)
             {
-                _cmbCustomer.Visible = false;
+                _cmbCustomer.Visible = true;      // was false
                 _cmbCustomer.Enabled = true;
 
                 var defaultCustomer = _customersList.FirstOrDefault(c =>
@@ -8870,12 +9452,18 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                     ?? _customersList.FirstOrDefault();
 
                 if (defaultCustomer != null)
+                {
                     _cmbCustomer.SelectedItem = defaultCustomer;
+                    _selectedCustomer = defaultCustomer;
+                    _customerNameValue = defaultCustomer.CustomerName;
+                    _customerAddressValue = defaultCustomer.Address;
+                }
             }
-            
+
+            SetDeliveryDate(DateTime.Today);
+            SelectPaymentTermById(_selectedCustomer?.PaymentTermID ?? 0);
 
             if (txtSearch != null) txtSearch.Enabled = true;
-            //if (txtBarcode != null) txtBarcode.Enabled = true;
             if (_searchWrapper != null) { _searchWrapper.Enabled = true; _searchWrapper.BackColor = InputBg; }
             if (_barcodeWrapper != null) { _barcodeWrapper.Enabled = true; _barcodeWrapper.BackColor = InputBg; }
             if (nudDiscount != null) nudDiscount.Enabled = true;
@@ -8883,24 +9471,23 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
 
             lblUpiTitle.Text = "Bank Transfer";
             lblUpiTitle.ForeColor = TextMuted;
-            txtCustomer.ForeColor = TextMuted;
-            txtCustomer.Text = "👤  Search customer…";
-            txtSearch.ForeColor = TextMuted;
-            txtSearch.Text = "  Search products…";
-            //txtBarcode.ForeColor = TextMuted;
-            //txtBarcode.Text = "  Scan barcode…";
+
+            // ── Search boxes: empty, no placeholder text written back ──
+            txtCustomer.Text = "";
+            txtCustomer.ForeColor = TextWhite;
+            txtSearch.Text = "";
+            txtSearch.ForeColor = TextWhite;
+
             listSearchResults.Visible = false;
             HideCustomerDropdown();
             nudDiscount.Value = _defaultDiscountPct;
             RefreshCart();
             UpdateTotals();
-            _chargesAllocated = false;        // ← mark charges as no longer valid
+            _chargesAllocated = false;
             RefreshChargesButtonLabel();
 
-            if (generateNewInvoiceNo)
-                lblInvoiceNo.Text = _isD365Mode
-                    ? SalesRepository.NextInvoiceNo()
-                    : SalesRepository.NextInvoiceNo();
+            //if (generateNewInvoiceNo)
+            //    lblInvoiceNo.Text = SalesRepository.NextInvoiceNo();
 
             SetActiveSplit("cash");
             _isPendingInvoiceMode = false;
@@ -8911,27 +9498,17 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 BuildHotItems();
                 BuildAutocomplete();
             }
+
             if (lblSplitBalance != null)
+            {
                 lblSplitBalance.Visible = false;
-            _customerNameValue = "";
-            _customerAddressValue = "";
-            _customerVatValue = "";
-            _customerDiscountPct = 0m;
-
-            // Button already hidden above — just reset its label
-
+                lblSplitBalance.ForeColor = TextMuted;
+            }
 
             if (ShiftState.IsOpen && ShiftState.CurrentFloat < 50)
                 ShowStatus($"⚠ Float low: {Fmt(ShiftState.CurrentFloat)} — open Float Entry (F8).", false);
-            // Reset unit prices display
 
-            // Reset split balance visibility - show if not in pending mode
-            if (lblSplitBalance != null)
-            {
-                lblSplitBalance.Visible = !_isPendingInvoiceMode;  // Show unless pending
-                                                                   // lblSplitBalance.Text = "TOTAL: Ready for items";
-                lblSplitBalance.ForeColor = TextMuted;
-            }
+            FocusSearchBox();
         }
 
         private void ShowStatus(string msg, bool ok)
@@ -8953,11 +9530,14 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
         //  PAINT / TITLE BAR
         // ══════════════════════════════════════════════════════════════════════
         protected override void OnPaint(PaintEventArgs e)
-        { base.OnPaint(e); e.Graphics.Clear(BgDark); }
+        {
+            base.OnPaint(e);
+            e.Graphics.Clear(BgDark);
+        }
 
         private void panelHeader_Paint(object sender, PaintEventArgs e)
         {
-            e.Graphics.Clear(PanelDark);
+            e.Graphics.Clear(Color.FromArgb(20, 30, 50));
             using (var pen = new Pen(Border, 1f))
                 e.Graphics.DrawLine(pen, 0, panelHeader.Height - 1, panelHeader.Width, panelHeader.Height - 1);
         }
@@ -8966,15 +9546,19 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
         {
             var p = (Panel)sender; var g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.Clear(PanelDark);
+            g.Clear(BgDark);                       // corners blend into the page
+            using (var fill = new SolidBrush(PanelDark))
             using (var pen = new Pen(Border, 1f))
-            using (var path = RoundedPath(new Rectangle(1, 1, p.Width - 2, p.Height - 2), 10))
+            using (var path = RoundedPath(new Rectangle(1, 1, p.Width - 3, p.Height - 3), 10))
+            {
+                g.FillPath(fill, path);
                 g.DrawPath(pen, path);
+            }
         }
 
         private void panelFooterBar_Paint(object sender, PaintEventArgs e)
         {
-            e.Graphics.Clear(PanelDark);
+            e.Graphics.Clear(Color.FromArgb(20, 30, 50));
             using (var pen = new Pen(Border, 1f))
                 e.Graphics.DrawLine(pen, 0, 0, panelFooterBar.Width, 0);
         }
@@ -9040,7 +9624,10 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
 
         private void panelHeader_Resize(object sender, EventArgs e) => RepositionTitleButtons();
         private void panelHeader_DoubleClick(object sender, EventArgs e) => btnMax_Click(sender, e);
-        private void btnClose_Click(object sender, EventArgs e) => this.Close();
+        private void btnClose_Click(object sender, EventArgs e)
+        {
+            ExitToDashboard();
+        }
         private void btnMin_Click(object sender, EventArgs e) => this.WindowState = FormWindowState.Minimized;
         private void btnMax_Click(object sender, EventArgs e)
         {
@@ -9051,12 +9638,13 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
         }
 
         private void btnClose_MouseEnter(object sender, EventArgs e) => btnClose.BackColor = Color.FromArgb(196, 30, 58);
-        private void btnClose_MouseLeave(object sender, EventArgs e) => btnClose.BackColor = PanelDark;
+        private void btnClose_MouseLeave(object sender, EventArgs e) => btnClose.BackColor = Color.FromArgb(20, 30, 50);
+        private void btnMax_MouseLeave(object sender, EventArgs e) => btnMax.BackColor = Color.FromArgb(20, 30, 50);
+        private void btnMin_MouseLeave(object sender, EventArgs e) => btnMin.BackColor = Color.FromArgb(20, 30, 50);
         private void btnMax_MouseEnter(object sender, EventArgs e) => btnMax.BackColor = Color.FromArgb(55, 62, 78);
-        private void btnMax_MouseLeave(object sender, EventArgs e) => btnMax.BackColor = PanelDark;
+ 
         private void btnMin_MouseEnter(object sender, EventArgs e) => btnMin.BackColor = Color.FromArgb(55, 62, 78);
-        private void btnMin_MouseLeave(object sender, EventArgs e) => btnMin.BackColor = PanelDark;
-
+      
         private void panelHeader_MouseDown(object sender, MouseEventArgs e)
         { _drag = true; _dragCursor = Cursor.Position; _dragForm = this.Location; }
         private void panelHeader_MouseMove(object sender, MouseEventArgs e)
@@ -9093,7 +9681,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
             _scheduler?.Dispose();
-            _hotItemsTooltip?.Dispose(); 
+            _hotItemsTooltip?.Dispose();
             _productSyncTimer?.Stop(); _productSyncTimer?.Dispose();
             _offlineOrderSyncTimer?.Stop(); _offlineOrderSyncTimer?.Dispose();
             _stockSyncTimer?.Stop(); _stockSyncTimer?.Dispose();
@@ -9101,6 +9689,19 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             _resizeDebounce?.Dispose();
             _resizeDebounce = null;
             CloseToast();
+
+            base.OnFormClosed(e);   // ← this is the fix
+        }
+      
+
+        private void ExitToDashboard()
+        {
+            DashboardEventBus.Notify();
+
+            if (IsEmbedded && ExitRequested != null)
+                ExitRequested(this, EventArgs.Empty);   // host swaps back to the dashboard view
+            else
+                this.Close();
         }
         // ══════════════════════════════════════════════════════════════════════
         //  SEARCH RESULTS — OWNER-DRAW (modern dark dropdown)
@@ -9325,6 +9926,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
         [JsonPropertyName("mobile")] public string Mobile { get; set; } = "";
         [JsonPropertyName("email")] public string Email { get; set; } = "";
         [JsonPropertyName("status")] public bool Status { get; set; }
+        [JsonPropertyName("paymentTermID")] public int PaymentTermID { get; set; }
     }
 
     public class TaxDto
@@ -9339,6 +9941,12 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
         [JsonPropertyName("uomDescription")] public string UomDescription { get; set; } = "";
         [JsonPropertyName("unitsPerPack")] public int UnitsPerPack { get; set; } = 1;   // ← NEW
         [JsonPropertyName("retailPrice")] public decimal RetailPrice { get; set; } = 0m; // ← NEW
+    }
+    public class PaymentTermDto
+    {
+        public int PaymentTermID { get; set; }
+        public string Description { get; set; } = "";
+        public override string ToString() => Description;
     }
 
 }
