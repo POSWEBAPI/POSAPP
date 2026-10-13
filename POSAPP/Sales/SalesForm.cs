@@ -622,68 +622,111 @@ namespace POSAPP
             }
             catch (Exception ex) { Debug.WriteLine("LoadPaymentTermsAsync: " + ex.Message); }
         }
-       
-        
-         
 
-        
-        private void ShowAlert(string title, string message, AlertKind kind = AlertKind.Warning)
+
+
+
+
+        private void ShowAlert(string title, string message, AlertKind kind = AlertKind.Warning, IWin32Window owner = null)
         {
-            if (this.InvokeRequired) { this.Invoke(new Action(() => ShowAlert(title, message, kind))); return; }
+            if (this.InvokeRequired) { this.Invoke(new Action(() => ShowAlert(title, message, kind, owner))); return; }
 
-            Color accent; string icon;
+            Color accent, accentBg;
             switch (kind)
             {
-                case AlertKind.Error: accent = AccRed; icon = "⛔"; break;
-                case AlertKind.Success: accent = AccGreen; icon = "✅"; break;
-                case AlertKind.Info: accent = AccBlue; icon = "ℹ"; break;
-                default: accent = AccOrange; icon = "⚠"; break;
+                case AlertKind.Error: accent = AccRed; accentBg = Color.FromArgb(60, 24, 28); break;
+                case AlertKind.Success: accent = AccGreen; accentBg = Color.FromArgb(18, 55, 35); break;
+                case AlertKind.Info: accent = AccBlue; accentBg = Color.FromArgb(22, 38, 70); break;
+                default: accent = AccOrange; accentBg = Color.FromArgb(60, 45, 18); break;
             }
 
-            const int W = 460, M = 28;
+            float scale = this.DeviceDpi / 96f;
+            int S(int v) => (int)Math.Round(v * scale);
+
+            int W = S(460), M = S(28);
+
+            using var titleFont = new Font("Segoe UI", 13F, FontStyle.Bold);
             using var msgFont = new Font("Segoe UI", 10F);
-            int msgH = TextRenderer.MeasureText(message, msgFont, new Size(W - M * 2, 0), TextFormatFlags.WordBreak).Height + 6;
-            msgH = Math.Min(msgH, 320);
+            using var btnFont = new Font("Segoe UI", 10.5F, FontStyle.Bold);
+
+            int titleH = titleFont.Height + S(8);
+            int msgH = TextRenderer.MeasureText(message, msgFont, new Size(W - M * 2, 0),
+                           TextFormatFlags.WordBreak | TextFormatFlags.NoPadding).Height + S(8);
+            msgH = Math.Min(msgH, S(320));
+            int btnH = Math.Max(S(42), btnFont.Height + S(18));
 
             var dlg = new Form
             {
                 FormBorderStyle = FormBorderStyle.None,
-                StartPosition = FormStartPosition.CenterParent,
+                StartPosition = FormStartPosition.Manual,      // we centre it ourselves below
                 BackColor = Color.FromArgb(22, 26, 36),
                 ShowInTaskbar = false,
-                KeyPreview = true
+                KeyPreview = true,
+                AutoScaleMode = AutoScaleMode.None             // we do our own DPI scaling
             };
 
-            dlg.Controls.Add(new Panel { Size = new Size(W, 5), Location = Point.Empty, BackColor = accent });
+            // accent bar
+            dlg.Controls.Add(new Panel { Size = new Size(W, S(5)), Location = Point.Empty, BackColor = accent });
 
-            int y = 29;
-            var ico = new Label
+            int y = S(28);
+
+            // ── icon: drawn by hand, no emoji glyph to clip ───────────────────────────
+            int icoSize = S(56);
+            var ico = new Panel
             {
-                Text = icon,
-                Font = new Font("Segoe UI Emoji", 20F),
-                ForeColor = accent,
-                BackColor = Color.FromArgb(38, 42, 54),
-                Size = new Size(56, 56),
-                Location = new Point((W - 56) / 2, y),
-                TextAlign = ContentAlignment.MiddleCenter
+                Size = new Size(icoSize, icoSize),
+                Location = new Point((W - icoSize) / 2, y),
+                BackColor = accentBg
             };
-            ico.Region = MakeRoundedRegion(ico.Size, 28);
-            dlg.Controls.Add(ico);
-            y += 56 + 12;
+            ico.Region = MakeRoundedRegion(ico.Size, icoSize / 2);
+            ico.Paint += (s, pe) =>
+            {
+                var g = pe.Graphics;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                float cx = icoSize / 2f, cy = icoSize / 2f, u = icoSize / 56f;
 
+                if (kind == AlertKind.Success)
+                {
+                    using var pen = new Pen(accent, 4.5f * u) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+                    g.DrawLines(pen, new[]
+                    {
+                new PointF(cx - 12 * u, cy + 1 * u),
+                new PointF(cx - 4 * u,  cy + 9 * u),
+                new PointF(cx + 13 * u, cy - 9 * u)
+            });
+                }
+                else if (kind == AlertKind.Error)
+                {
+                    using var pen = new Pen(accent, 4.5f * u) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+                    g.DrawLine(pen, cx - 10 * u, cy - 10 * u, cx + 10 * u, cy + 10 * u);
+                    g.DrawLine(pen, cx + 10 * u, cy - 10 * u, cx - 10 * u, cy + 10 * u);
+                }
+                else
+                {
+                    using var f = new Font("Segoe UI", 22F, FontStyle.Bold);
+                    TextRenderer.DrawText(g, kind == AlertKind.Info ? "i" : "!", f, ico.ClientRectangle, accent,
+                        TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+                }
+            };
+            dlg.Controls.Add(ico);
+            y += icoSize + S(14);
+
+            // ── title ─────────────────────────────────────────────────────────────────
             dlg.Controls.Add(new Label
             {
                 Text = title,
-                Font = new Font("Segoe UI", 13F, FontStyle.Bold),
+                Font = titleFont,
                 ForeColor = TextWhite,
                 BackColor = Color.Transparent,
                 AutoSize = false,
-                Size = new Size(W, 30),
+                Size = new Size(W, titleH),
                 Location = new Point(0, y),
-                TextAlign = ContentAlignment.MiddleCenter
+                TextAlign = ContentAlignment.MiddleCenter,
+                UseCompatibleTextRendering = false
             });
-            y += 34;
+            y += titleH + S(6);
 
+            // ── message ───────────────────────────────────────────────────────────────
             dlg.Controls.Add(new Label
             {
                 Text = message,
@@ -693,37 +736,55 @@ namespace POSAPP
                 AutoSize = false,
                 Size = new Size(W - M * 2, msgH),
                 Location = new Point(M, y),
-                TextAlign = ContentAlignment.TopCenter
+                TextAlign = ContentAlignment.TopCenter,
+                UseCompatibleTextRendering = false
             });
-            y += msgH + 20;
+            y += msgH + S(20);
 
-            var btnOk = new Button
+            // ── OK button: painted panel (smooth anti-aliased corners) ───────────────
+            bool hot = false;
+            var btnOk = new Panel
             {
-                Text = "OK",
-                Font = new Font("Segoe UI", 10.5F, FontStyle.Bold),
-                ForeColor = Color.White,
-                BackColor = accent,
-                FlatStyle = FlatStyle.Flat,
-                Size = new Size(W - M * 2, 42),
+                Size = new Size(W - M * 2, btnH),
                 Location = new Point(M, y),
-                Cursor = Cursors.Hand
+                BackColor = Color.FromArgb(22, 26, 36),        // matches dialog so corners blend
+                Cursor = Cursors.Hand,
+                TabStop = true
             };
-            btnOk.FlatAppearance.BorderSize = 0;
-            btnOk.Region = MakeRoundedRegion(btnOk.Size, 10);
+            btnOk.Paint += (s, pe) =>
+            {
+                var g = pe.Graphics;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                using var path = RoundedPath(new Rectangle(0, 0, btnOk.Width - 1, btnOk.Height - 1), S(10));
+                using var fill = new SolidBrush(hot ? ControlPaint.Dark(accent, 0.1f) : accent);
+                g.FillPath(fill, path);
+                TextRenderer.DrawText(g, "OK", btnFont, btnOk.ClientRectangle, Color.White,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+            };
+            btnOk.MouseEnter += (s, e) => { hot = true; btnOk.Invalidate(); };
+            btnOk.MouseLeave += (s, e) => { hot = false; btnOk.Invalidate(); };
             btnOk.Click += (s, e) => dlg.Close();
             dlg.Controls.Add(btnOk);
-            y += 42 + 24;
+            y += btnH + S(24);
 
             dlg.ClientSize = new Size(W, y);
-            dlg.Region = MakeRoundedRegion(dlg.ClientSize, 16);
+            dlg.Region = MakeRoundedRegion(dlg.ClientSize, S(16));
+
             dlg.KeyDown += (s, e) =>
             {
                 if (e.KeyCode == Keys.Enter || e.KeyCode == Keys.Escape) { e.Handled = true; dlg.Close(); }
             };
-            dlg.Shown += (s, e) => btnOk.Focus();
-            dlg.ShowDialog(this);
 
-            FocusSearchBox();
+            // ── centre over the owner (payment dialog) or SalesForm ──────────────────
+            Control ownerCtl = (owner as Control) ?? this;
+            Rectangle ob = ownerCtl.RectangleToScreen(ownerCtl.ClientRectangle);
+            dlg.Location = new Point(ob.X + (ob.Width - dlg.Width) / 2,
+                                     ob.Y + (ob.Height - dlg.Height) / 2);
+
+            dlg.ShowDialog(owner ?? this);
+            dlg.Dispose();
+
+            if (owner == null) FocusSearchBox();
         }
 
         // ══════════════════════════════════════════════════════════════════════
@@ -1633,10 +1694,13 @@ namespace POSAPP
                 : "Normal sale — payment will be collected in a popup at Tender.", true);
         }
         private const string DEFAULT_CUSTOMER_CODE = "WALKIN";   // ← adjust to match your real default customer code
+        private static bool _offlineSchemaEnsured;
         private void EnsureOfflineSyncSchema()
         {
+            if (_offlineSchemaEnsured) return;
             try
             {
+
                 using var conn = new SQLiteConnection($"Data Source={_dbPath} ");
                 conn.Open();
                 using var cmd = conn.CreateCommand();
@@ -1764,6 +1828,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 TryAddColumn("D365ItemCache", "BaseUOMName TEXT");
                 TryAddColumn("D365ItemCache", "PackUomJson TEXT");
                 cmd.ExecuteNonQuery();
+                _offlineSchemaEnsured = true;
             }
             catch (Exception ex)
             {
@@ -3481,8 +3546,7 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
 
             decimal onHand, reserved;
             bool found;
-
-            if (GetOnline())
+            if (await Task.Run(() => GetOnline()).ConfigureAwait(true))
             {
                 (onHand, reserved, found) = await GetLiveStoreStockAsync(itemId).ConfigureAwait(true);
                 if (!found)
@@ -5180,23 +5244,28 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
         {
             Control c = sender as Control;
             Product prod = null;
-
             while (c != null && prod == null)
             {
                 if (c.Tag is Product p) prod = p;
                 else c = c.Parent;
             }
-
             if (prod == null) return;
- 
-            else if (prod.AvailableUOMs != null && prod.AvailableUOMs.Count > 1)
+
+            if (prod.AvailableUOMs != null && prod.AvailableUOMs.Count > 1)
             {
                 var picked = await ShowUomQtyPicker(prod);
                 if (picked.HasValue)
-                    await AddToCart(prod, picked.Value.Qty, picked.Value.UomId);
+                {
+                    using (ShowBusy("Adding item…"))
+                        await AddToCart(prod, picked.Value.Qty, picked.Value.UomId);
+                }
             }
             else
-                await AddToCart(prod, 1);
+            {
+                using (ShowBusy("Adding item…"))
+                    await AddToCart(prod, 1);
+            }
+            FocusSearchBox();
         }
         // REPLACE the existing AddToRecentSales() method entirely
         private void AddToRecentSales(string invoice, decimal amount) => _ = AddToRecentSalesAsync(invoice, amount);
@@ -5507,18 +5576,24 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
 
             ClearSearchBox();
 
-             if (prod.AvailableUOMs != null && prod.AvailableUOMs.Count > 1)
+            if (prod.AvailableUOMs != null && prod.AvailableUOMs.Count > 1)
             {
                 var picked = await ShowUomQtyPicker(prod);
                 if (picked.HasValue)
-                    await AddToCart(prod, picked.Value.Qty, picked.Value.UomId);
+                {
+                    using (ShowBusy("Adding item…"))
+                        await AddToCart(prod, picked.Value.Qty, picked.Value.UomId);
+                }
             }
             else
-                await AddToCart(prod, 1);
+            {
+                using (ShowBusy("Adding item…"))
+                    await AddToCart(prod, 1);
+            }
 
-            FocusSearchBox();   // instead of ActiveControl = null
-        } 
-       
+            FocusSearchBox();
+        }
+
 
         // ══════════════════════════════════════════════════════════════════════
         //  BARCODE
@@ -5644,7 +5719,23 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             // ── Live available stock (base units) — same call AddToCart uses ──
             // ── Live available stock (base units) — this call is for adding a NEW
             //    UOM, so every existing cart line for this item should count. ──
-            decimal availableBase = await GetLiveAvailableStockAsync(prod.ItemId).ConfigureAwait(true);
+            // Instant: compute from the in-memory cache. Only if there is no cached row at all,
+            // fall back to a live fetch behind the spinner.
+            decimal CachedAvailable()
+            {
+                var (onHand, reserved, found) = TryGetCachedStock(prod.ItemId, prod.Barcode);
+                if (!found) return -1m;
+                decimal inCart = _cart.Where(c => c.ItemId == prod.ItemId)
+                                      .Sum(c => c.Qty * GetUnitsPerPackForCartItem(c));
+                return Math.Max(0m, onHand - reserved - inCart - GetQueuedOfflineQtyForItem(prod.ItemId));
+            }
+
+            decimal availableBase = CachedAvailable();
+            if (availableBase < 0m)
+            {
+                using (ShowBusy("Checking stock…"))
+                    availableBase = await GetLiveAvailableStockAsync(prod.ItemId).ConfigureAwait(true);
+            }
 
             (int UomId, int Qty)? result = null;
 
@@ -5860,9 +5951,26 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             };
 
             dlg.Controls.Add(btnAdd);
-            dlg.Shown += (s, e) => cmbUom.Focus();
+
+            dlg.Shown += async (s, e) =>
+            {
+                cmbUom.Focus();
+
+                // Background refresh with authoritative stock; the dialog is already on screen.
+                try
+                {
+                    decimal live = await GetLiveAvailableStockAsync(prod.ItemId).ConfigureAwait(true);
+                    if (!dlg.IsDisposed && live != availableBase)
+                    {
+                        availableBase = live;
+                        RefreshMaxForSelectedUom();       // re-clamps qty / updates hint
+                    }
+                }
+                catch (Exception ex) { Debug.WriteLine("UOM live stock refresh: " + ex.Message); }
+            };
+
             dlg.ShowDialog(this);
-            return result;
+            return result; 
         }
 
         // ══════════════════════════════════════════════════════════════════════
@@ -8516,9 +8624,32 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             {
                 decimal.TryParse(txtAmount.Text, out decimal typed);
                 if (typed < 0) typed = 0;
+
+                // Bank / Card can never exceed what is still owed. Only Cash may overpay (gives change).
+                if (localActive != "cash")
+                {
+                    decimal others = localActive == "upi" ? localCash + localCard
+                                                          : localCash + localUpi;
+                    decimal maxAllowed = Math.Max(0m, grandTotal - others);
+
+                    if (typed > maxAllowed + 0.001m)
+                    {
+                        typed = maxAllowed;
+
+                        _suppressTextChanged = true;
+                        txtAmount.Text = typed > 0 ? typed.ToString("F2") : "";
+                        txtAmount.SelectionStart = txtAmount.Text.Length;   // keep caret at the end
+                        _suppressTextChanged = false;
+
+                        string method = localActive == "upi" ? "Bank Transfer" : "Card";
+                        ShowStatus($"⚠ {method} cannot exceed the remaining {Fmt(maxAllowed)}.", false);
+                    }
+                }
+
                 if (localActive == "cash") localCash = typed;
                 else if (localActive == "upi") localUpi = typed;
                 else localCard = typed;
+
                 RefreshBalance();
             }
 
@@ -8553,6 +8684,18 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                                 : localActive == "upi" ? localCash + localCard
                                 : localCash + localUpi;
                 decimal fill = Math.Max(0m, grandTotal - others);
+
+                if (fill <= 0.001m)
+                {
+                    ShowAlert("Fully Paid",
+                              "Already fully paid.\nNothing remaining to fill.",
+                              AlertKind.Success,
+                              dlg);                       // owner = the payment dialog
+                    txtAmount.Focus();
+                    txtAmount.SelectAll();
+                    return;
+                }
+
                 _suppressTextChanged = true;
                 txtAmount.Text = fill.ToString("F2");
                 _suppressTextChanged = false;
@@ -8569,6 +8712,14 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                     cmbBank.Focus();
                     return;
                 }
+
+                // Non-cash portions must never exceed the grand total
+                if (localUpi + localCard > grandTotal + 0.001m)
+                {
+                    ShowStatus("⛔ Bank + Card amount cannot exceed the total due.", false);
+                    return;
+                }
+
                 confirmed = true;
                 dlg.Close();
             };
