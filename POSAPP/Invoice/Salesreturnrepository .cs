@@ -120,7 +120,35 @@ namespace POSAPP.Invoice
         public decimal Total { get; set; }
         public int LineCount { get; set; }
     }
+    public class ApiInvoiceLine
+    {
+        public int InvoiceLineID { get; set; }
+        public int ItemId { get; set; }
+        public string ItemName { get; set; } = "";
+        public decimal Qty { get; set; }
+        public int UOM { get; set; }
+        public string UOMName { get; set; } = "EA";
+        public decimal UnitPrice { get; set; }
+        public decimal DiscountPct { get; set; }
+        public decimal TaxPct { get; set; }
+    }
 
+    public class ApiInvoice
+    {
+        public int InvoiceID { get; set; }
+        public string InvoiceNo { get; set; } = "";
+        public string SONumber { get; set; } = "";
+        public DateTime InvoiceDate { get; set; } = DateTime.Now;
+        public List<ApiInvoiceLine> Lines { get; set; } = new List<ApiInvoiceLine>();
+        public decimal Total => Lines.Sum(l => l.Qty * l.UnitPrice);
+    }
+
+    public class ProcessReturnLineDto
+    {
+        [JsonPropertyName("InvoiceID")] public int InvoiceID { get; set; }
+        [JsonPropertyName("InvoiceLineID")] public int InvoiceLineID { get; set; }
+        [JsonPropertyName("ReturnQty")] public int ReturnQty { get; set; }
+    }
     // ══════════════════════════════════════════════════════════════════════════
     //  SalesReturnRepository
     // ══════════════════════════════════════════════════════════════════════════
@@ -193,6 +221,90 @@ namespace POSAPP.Invoice
         {
             try { Execute(conn, $"ALTER TABLE {table} ADD COLUMN {column} {type};"); }
             catch { /* column already exists — nothing to do */ }
+        }
+        // Same endpoint as getSOInvoicesByCustomer in soInvoiceApi.js
+        private const string INVOICE_ENDPOINT = "/api/SOInvoice/Getinvoice?customerid=";
+
+        private static decimal Dec(JsonElement e, params string[] names)
+        {
+            foreach (var n in names)
+            {
+                if (!e.TryGetProperty(n, out var v)) continue;
+                if (v.ValueKind == JsonValueKind.Number && v.TryGetDecimal(out var d)) return d;
+                if (v.ValueKind == JsonValueKind.String &&
+                    decimal.TryParse(v.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out d)) return d;
+            }
+            return 0m;
+        }
+
+        public static async Task<List<ApiInvoice>> GetInvoicesForCustomerAsync(int customerId)
+        {
+            var list = new List<ApiInvoice>();
+
+            var root = ApiClient.UnwrapArray(
+                await ApiClient.GetJsonAsync(INVOICE_ENDPOINT + customerId));
+
+            System.Diagnostics.Debug.WriteLine("Getinvoice RAW: " + root.GetRawText());
+
+            foreach (var inv in root.EnumerateArray())
+            {
+                // React: inv.header ?? inv.Header ; inv.lines ?? inv.Lines
+                JsonElement header = inv.TryGetProperty("header", out var h) ? h
+                                   : inv.TryGetProperty("Header", out h) ? h : inv;
+
+                bool hasLines = inv.TryGetProperty("lines", out var lines)
+                             || inv.TryGetProperty("Lines", out lines);
+
+                var invoice = new ApiInvoice
+                {
+                    InvoiceID = ApiClient.Int(header, "invoiceID", "InvoiceID"),
+                    InvoiceNo = ApiClient.Str(header, "invoiceNo", "InvoiceNo"),
+                    SONumber = ApiClient.Str(header, "soNumber", "SONumber")
+                };
+
+                string rawDate = ApiClient.Str(header, "invoiceDate", "InvoiceDate");
+                if (!string.IsNullOrWhiteSpace(rawDate))
+                {
+                    if (!DateTime.TryParse(rawDate, out var dt))
+                        DateTime.TryParse(rawDate.Replace('.', ':'), out dt);
+                    if (dt != default) invoice.InvoiceDate = dt;
+                }
+
+                if (hasLines && lines.ValueKind == JsonValueKind.Array)
+                {
+                    int idx = 0;
+                    foreach (var l in lines.EnumerateArray())
+                    {
+                        int lineId = ApiClient.Int(l, "invoiceLineID", "InvoiceLineID",
+                                                      "soInvoiceLineID", "SOInvoiceLineID", "id");
+                        invoice.Lines.Add(new ApiInvoiceLine
+                        {
+                            InvoiceLineID = lineId != 0 ? lineId : idx,
+                            ItemId = ApiClient.Int(l, "itemId", "ItemId", "itemID", "ItemID", "itemNo", "ItemNo"),
+                            ItemName = ApiClient.Str(l, "itemName", "ItemName", "itemname"),
+                            Qty = Dec(l, "qty", "Qty"),
+                            UOM = ApiClient.Int(l, "uom", "UOM"),
+                            UOMName = ApiClient.Str(l, "uomName", "UOMName", "uomText", "uom_Text"),
+                            UnitPrice = Dec(l, "unitPrice", "UnitPrice"),
+                            DiscountPct = Dec(l, "discountPercent", "DiscountPercentage"),
+                            TaxPct = Dec(l, "taxPercentage", "TaxPercentage")
+                        });
+                        idx++;
+                    }
+                }
+
+                list.Add(invoice);
+            }
+
+            list.Sort((a, b) => b.InvoiceDate.CompareTo(a.InvoiceDate));
+            return list;   // exceptions bubble up so the form can show them
+        }
+
+        // Same as processSOReturn in soInvoiceApi.js -> POST /api/SOInvoice/process-return
+        public static async Task ProcessSOReturnAsync(List<ProcessReturnLineDto> lines)
+        {
+            if (lines == null || lines.Count == 0) return;
+            await ApiClient.PostJsonAsync("/api/SOInvoice/process-return", lines);
         }
 
         // ══════════════════════════════════════════════════════════════════════

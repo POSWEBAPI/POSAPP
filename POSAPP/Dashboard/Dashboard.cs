@@ -1707,12 +1707,12 @@ namespace POSAPP
             if (ShiftState.IsOpen)
             {
                 btnNavCloseShift.ForeColor = Color.FromArgb(250, 155, 155);
-                btnNavCloseShift.Text = "  🔒   Close Shift  ●";
+                btnNavCloseShift.Text = "  🔒     Shift  ●";
             }
             else
             {
                 btnNavCloseShift.ForeColor = Color.FromArgb(148, 175, 218);
-                btnNavCloseShift.Text = "  🔒   Close Shift";
+                btnNavCloseShift.Text = "  🔒     Shift";
             }
         }
 

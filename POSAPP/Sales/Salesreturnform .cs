@@ -74,8 +74,8 @@ namespace POSAPP.Sales
 
         private int? _selectedCustomerId;
         private string _selectedCustomerName = "";
-        private List<POSAPP.CustomerFullDto> _customers = new List<POSAPP.CustomerFullDto>();
-        private List<InvoiceLite> _customerInvoices = new List<InvoiceLite>();
+        private List<POSAPP.CustomerFullDto> _customers = new List<POSAPP.CustomerFullDto>(); 
+        private List<ApiInvoice> _customerInvoices = new List<ApiInvoice>();
 
         private string _activeInvoiceNo;                                   // invoice currently being browsed
         private List<CandidateLine> _candidateLines = new List<CandidateLine>(); // lines of the browsed invoice, not yet added
@@ -149,6 +149,8 @@ namespace POSAPP.Sales
             public int PurchasedQty { get; set; }           // remaining returnable qty on that invoice
             public int ReturnQty { get; set; }
             public bool Added { get; set; }
+            public int InvoiceID { get; set; }
+            public int InvoiceLineID { get; set; }
         }
 
         private class ReturnLineItem
@@ -167,6 +169,8 @@ namespace POSAPP.Sales
             public decimal LineSubtotal => Math.Round(UnitPrice * ReturnQty * (1m - DiscountPct / 100m), 2);
             public decimal LineTax => Math.Round(LineSubtotal * TaxPct / 100m, 2);
             public decimal LineRefund => LineSubtotal + LineTax;
+            public int InvoiceID { get; set; }
+            public int InvoiceLineID { get; set; }
         }
 
         // ── A4 receipt DTOs ──────────────────────────────────────────────────
@@ -399,6 +403,7 @@ namespace POSAPP.Sales
             {
                 if (cmbCustomer.SelectedItem is POSAPP.CustomerFullDto cs)
                 {
+                    _selectedCustomerId = cs.CustomerID;
                     _selectedCustomerName = cs.CustomerName;
                     LoadCustomerInvoices();
                 }
@@ -459,19 +464,20 @@ namespace POSAPP.Sales
             panelContent.Controls.Add(_cardInvoiceList);
         }
 
-        private void LoadCustomerInvoices()
+        private async void LoadCustomerInvoices()
         {
-            if (string.IsNullOrWhiteSpace(_selectedCustomerName)) return;
+            if (_selectedCustomerId == null) return;
 
+            ShowStatus("Loading invoices...", true);
             try
             {
-                _customerInvoices = SalesReturnRepository.GetInvoicesForCustomer(_selectedCustomerName, _companyId)
-                                     ?? new List<InvoiceLite>();
+                _customerInvoices = await SalesReturnRepository.GetInvoicesForCustomerAsync(_selectedCustomerId.Value)
+                                    ?? new List<ApiInvoice>();
             }
             catch (Exception ex)
             {
                 ShowStatus("Could not load invoices: " + ex.Message, false);
-                _customerInvoices = new List<InvoiceLite>();
+                _customerInvoices = new List<ApiInvoice>();
             }
 
             _activeInvoiceNo = null;
@@ -494,7 +500,7 @@ namespace POSAPP.Sales
             {
                 var card = new Panel
                 {
-                    Size = new Size(220, 78),
+                    Size = new Size(220, 96),
                     Margin = new Padding(0, 0, 10, 10),
                     BackColor = Color.FromArgb(28, 32, 42),
                     Cursor = Cursors.Hand,
@@ -511,6 +517,15 @@ namespace POSAPP.Sales
                     AutoSize = true,
                     Location = new Point(12, 10)
                 };
+                var lblSo = new Label
+                {
+                    Text = $"SO: {(string.IsNullOrWhiteSpace(inv.SONumber) ? "-" : inv.SONumber)}  ·  {inv.Lines.Count} item(s)",
+                    Font = new Font("Segoe UI", 8.5F),
+                    ForeColor = TextMid,
+                    BackColor = Color.Transparent,
+                    AutoSize = true,
+                    Location = new Point(12, 32)
+                };
                 var lblDate = new Label
                 {
                     Text = inv.InvoiceDate.ToString("dd MMM yyyy"),
@@ -518,7 +533,7 @@ namespace POSAPP.Sales
                     ForeColor = TextMid,
                     BackColor = Color.Transparent,
                     AutoSize = true,
-                    Location = new Point(12, 32)
+                    Location = new Point(12, 52)
                 };
                 var lblTotal = new Label
                 {
@@ -527,10 +542,10 @@ namespace POSAPP.Sales
                     ForeColor = TextDark,
                     BackColor = Color.Transparent,
                     AutoSize = true,
-                    Location = new Point(12, 52)
+                    Location = new Point(12, 72)
                 };
 
-                card.Controls.AddRange(new Control[] { lblNo, lblDate, lblTotal });
+                card.Controls.AddRange(new Control[] { lblNo, lblSo, lblDate, lblTotal });
                 EventHandler clickHandler = (s, e) => SelectInvoice(inv.InvoiceNo);
                 card.Click += clickHandler;
                 foreach (Control child in card.Controls) child.Click += clickHandler;
@@ -592,61 +607,49 @@ namespace POSAPP.Sales
         }
 
 
-        private async void SelectInvoice(string invoiceNo)
+        private void SelectInvoice(string invoiceNo)
         {
-            var rows = SalesReturnRepository.LoadOriginalInvoiceLines(invoiceNo, _companyId);
-            if (rows == null || rows.Count == 0)
+            var inv = _customerInvoices.FirstOrDefault(i => i.InvoiceNo == invoiceNo);
+            if (inv == null || inv.Lines.Count == 0)
             { ShowStatus($"Invoice '{invoiceNo}' has no line items.", false); return; }
 
-            DateTime? invoiceDate = SalesReturnRepository.GetInvoiceSaleDate(invoiceNo);
-            if (invoiceDate.HasValue)
+            int daysSinceSale = (DateTime.Today - inv.InvoiceDate.Date).Days;
+            if (daysSinceSale > MAX_RETURN_DAYS)
             {
-                int daysSinceSale = (DateTime.Today - invoiceDate.Value.Date).Days;
-                if (daysSinceSale > MAX_RETURN_DAYS)
-                {
-                    MessageBox.Show(
-                        $"This invoice cannot be returned.\n\n" +
-                        $"Invoice Date : {invoiceDate.Value:dd MMM yyyy}\n" +
-                        $"Days Elapsed : {daysSinceSale} day(s)\n" +
-                        $"Return Window: {MAX_RETURN_DAYS} days\n\n" +
-                        "The return period has expired.",
-                        "Return Period Expired", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    ShowStatus($"Invoice {invoiceNo} is {daysSinceSale} days old (max {MAX_RETURN_DAYS}).", false);
-                    return;
-                }
+                MessageBox.Show(
+                    $"This invoice cannot be returned.\n\n" +
+                    $"Invoice Date : {inv.InvoiceDate:dd MMM yyyy}\n" +
+                    $"Days Elapsed : {daysSinceSale} day(s)\n" +
+                    $"Return Window: {MAX_RETURN_DAYS} days\n\n" +
+                    "The return period has expired.",
+                    "Return Period Expired", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                ShowStatus($"Invoice {invoiceNo} is {daysSinceSale} days old (max {MAX_RETURN_DAYS}).", false);
+                return;
             }
 
-            var alreadyReturned = await SalesReturnRepository.GetReturnedQtysAsync(invoiceNo);
-
             _candidateLines = new List<CandidateLine>();
-            foreach (var r in rows)
+            foreach (var r in inv.Lines)
             {
-                int previouslyReturned = 0;
-                foreach (var kv in alreadyReturned)
-                {
-                    if (string.Equals(kv.Key.Trim(), r.ItemName.Trim(), StringComparison.OrdinalIgnoreCase) ||
-                        (!string.IsNullOrWhiteSpace(r.Barcode) && string.Equals(kv.Key.Trim(), r.Barcode.Trim(), StringComparison.OrdinalIgnoreCase)))
-                    { previouslyReturned = kv.Value; break; }
-                }
-
-                // Also subtract quantity already added to THIS in-progress return, from any invoice.
-                string key = $"{invoiceNo}|{r.ItemName}|{r.Barcode}";
+                // API qty is already net of earlier returns (process-return reduces it on the server)
+                string key = $"{inv.InvoiceID}|{r.InvoiceLineID}";
                 int alreadyInThisReturn = _returnLines.Where(l => l.SourceKey == key).Sum(l => l.ReturnQty);
 
-                int remainingQty = r.Qty - previouslyReturned - alreadyInThisReturn;
-                if (remainingQty <= 0) continue;
+                int remaining = (int)r.Qty - alreadyInThisReturn;
+                if (remaining <= 0) continue;
 
                 _candidateLines.Add(new CandidateLine
                 {
                     SourceKey = key,
                     InvoiceNo = invoiceNo,
-                    Name = r.ItemName,
+                    InvoiceID = inv.InvoiceID,
+                    InvoiceLineID = r.InvoiceLineID,
+                    Name = string.IsNullOrWhiteSpace(r.ItemName) ? $"Item #{r.ItemId}" : r.ItemName,
                     UnitPrice = r.UnitPrice,
                     DiscountPct = r.DiscountPct,
                     TaxPct = r.TaxPct,
-                    UOM = string.IsNullOrWhiteSpace(r.UOM) ? "EA" : r.UOM,
-                    Barcode = r.Barcode,
-                    PurchasedQty = remainingQty,
+                    UOM = string.IsNullOrWhiteSpace(r.UOMName) ? "EA" : r.UOMName,
+                    Barcode = r.ItemId.ToString(),
+                    PurchasedQty = remaining,
                     ReturnQty = 0,
                     Added = _returnLines.Any(l => l.SourceKey == key)
                 });
@@ -783,6 +786,8 @@ namespace POSAPP.Sales
             {
                 SourceKey = c.SourceKey,
                 SourceInvoiceNo = c.InvoiceNo,
+                InvoiceID = c.InvoiceID,
+                InvoiceLineID = c.InvoiceLineID,
                 Name = c.Name,
                 UnitPrice = c.UnitPrice,
                 DiscountPct = c.DiscountPct,
@@ -1246,12 +1251,7 @@ namespace POSAPP.Sales
             lblRefundTotal.ForeColor = total > 0 ? TextGreen : TextMid;
         }
 
-        // ══════════════════════════════════════════════════════════════════
-        //  PROCESS RETURN — validates header fields, then shows the
-        //  Disposition step (mirrors React's showDispositionModal flow)
-        //  before saving.
-        // ══════════════════════════════════════════════════════════════════
-        private void BtnProcessReturn_Click(object sender, EventArgs e)
+        private async void BtnProcessReturn_Click(object sender, EventArgs e)
         {
             if (!_returnLines.Any())
             { ShowStatus("Add at least one item to the return.", false); return; }
@@ -1288,20 +1288,21 @@ namespace POSAPP.Sales
                 "Confirm Return", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
             if (confirm != DialogResult.Yes) return;
 
+            btnProcessReturn.Enabled = false;
+
             try
             {
                 string returnInvNo = SalesReturnRepository.NextReturnInvoiceNo();
                 var returnRecord = new SalesReturnRecord
                 {
                     ReturnInvoiceNo = returnInvNo,
-                    OriginalInvoiceNo = invoiceList,      // now potentially multi-invoice
+                    OriginalInvoiceNo = invoiceList,
                     CustomerName = _selectedCustomerName,
                     RefundMethod = _refundMethod,
                     RefundTotal = totalRefund,
                     ReturnDate = DateTime.Now,
                     CompanyId = _companyId,
                     CashierName = "ADMIN",
-                    // ── new header fields — add these properties to SalesReturnRecord ──
                     RmaNumber = _rmaNumber,
                     ReturnReason = _returnReasonCode,
                     DispositionCode = _dispositionCode,
@@ -1315,29 +1316,49 @@ namespace POSAPP.Sales
                         ReturnQty = l.ReturnQty,
                         RefundAmt = l.LineRefund,
                         Barcode = l.Barcode,
-                        // ── new per-line field — add this property to SalesReturnLine ──
                         OriginalInvoiceNo = l.SourceInvoiceNo
                     }).ToList()
                 };
 
+                // 1) Save locally
                 SalesReturnRepository.EnsureSchema();
                 SalesReturnRepository.SaveReturn(returnRecord);
-
                 DashboardEventBus.Notify();
 
-                // Disposition = "Scrap" means the goods are written off rather
-                // than restocked — skip any stock-return hook here. If/when you
-                // add an inventory-return call for other dispositions, gate it
-                // with this same check.
+                // 2) Reduce invoiced qty on the server (React's processSOReturn)
+                bool serverOk = true;
+                try
+                {
+                    var apiLines = _returnLines
+                        .Where(l => l.InvoiceID > 0 && l.InvoiceLineID > 0 && l.ReturnQty > 0)
+                        .Select(l => new ProcessReturnLineDto
+                        {
+                            InvoiceID = l.InvoiceID,
+                            InvoiceLineID = l.InvoiceLineID,
+                            ReturnQty = l.ReturnQty
+                        }).ToList();
+
+                    await SalesReturnRepository.ProcessSOReturnAsync(apiLines);
+                }
+                catch (Exception apiEx)
+                {
+                    serverOk = false;
+                    ShowStatus("Return saved, but updating invoice quantities failed: " + apiEx.Message, false);
+                    MessageBox.Show(
+                        "The return was saved locally, but the server could not update the invoiced quantities:\n\n" + apiEx.Message,
+                        "Partial Failure", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+
+                // 3) Stock hook (skipped for Scrap)
                 if (!string.Equals(_dispositionCode, "Scrap", StringComparison.OrdinalIgnoreCase))
                 {
-                    // TODO: call your inventory "return to stock" routine here,
-                    // e.g. InventoryRepository.ReturnStock(returnRecord.Lines, _companyId);
+                    // TODO: InventoryRepository.ReturnStock(returnRecord.Lines, _companyId);
                 }
 
                 PrintReturnReceipt(returnRecord);
 
-                ShowStatus($"✓ Return {returnInvNo} processed — refund {Fmt(totalRefund)} via {RefundMethodLabel()}.", true);
+                if (serverOk)
+                    ShowStatus($"✓ Return {returnInvNo} processed — refund {Fmt(totalRefund)} via {RefundMethodLabel()}.", true);
 
                 MessageBox.Show(
                     $"Return processed successfully!\n\nReturn Invoice:  {returnInvNo}\n" +
@@ -1351,6 +1372,7 @@ namespace POSAPP.Sales
             }
             catch (Exception ex)
             {
+                btnProcessReturn.Enabled = _returnLines.Any();
                 ShowStatus("Return error: " + ex.Message, false);
                 MessageBox.Show("Failed to save return:\n" + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }

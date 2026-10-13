@@ -129,13 +129,36 @@ namespace POSAPP.Shift
             };
             header.Controls.Add(_lblBadge);
 
-            // Bottom border on header
-            header.Paint += (s, pe) =>
+            // ── Window buttons ────────────────────────────────────────────
+            var btnClose = MakeWinBtn("\uE8BB", AccRed, () => Close());
+
+            Button btnMax = null;
+            btnMax = MakeWinBtn("\uE922", CardDark, () =>
             {
-                using var pen = new Pen(Border, 1f);
-                pe.Graphics.DrawLine(pen, 0, header.Height - 1,
-                                     header.Width, header.Height - 1);
-            };
+                var host = HostForm;
+                host.WindowState = host.WindowState == FormWindowState.Maximized
+                    ? FormWindowState.Normal
+                    : FormWindowState.Maximized;
+                btnMax.Text = host.WindowState == FormWindowState.Maximized
+                    ? "\uE923"   // restore glyph
+                    : "\uE922";  // maximize glyph
+            });
+
+            var btnMin = MakeWinBtn("\uE921", CardDark,
+                () => HostForm.WindowState = FormWindowState.Minimized);
+
+            // Add in reverse of the visual order → shows as  —  □  ✕
+            header.Controls.Add(btnMin);
+            header.Controls.Add(btnMax);
+            header.Controls.Add(btnClose);
+
+            // Bottom border as a real 1px panel (spans the full width)
+            header.Controls.Add(new Panel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 1,
+                BackColor = Border
+            });
 
             Controls.Add(header);
 
@@ -147,8 +170,9 @@ namespace POSAPP.Shift
                 AutoScroll = true
             };
             Controls.Add(body);
+            body.BringToFront();   // Fill must be laid out last so header doesn't cover it
 
-            // Centre column — fixed 560 px wide, horizontally centred
+            // Centre column
             _pnlCenter = new Panel
             {
                 BackColor = Color.Transparent,
@@ -156,7 +180,6 @@ namespace POSAPP.Shift
                 Top = 28
             };
 
-            // Anchor to centre on resize
             body.Resize += (s, e) =>
             {
                 _pnlCenter.Left = Math.Max(0, (body.Width - _pnlCenter.Width) / 2);
@@ -176,8 +199,30 @@ namespace POSAPP.Shift
             _pnlCenter.Controls.Add(_pnlOpen);
             _pnlCenter.Controls.Add(_pnlClose);
 
-            // BringToFront order matters for overlapping panels
             _pnlOpen.BringToFront();
+        }
+        // Min/Max act on the host window; falls back to this form if shown standalone
+        private Form HostForm => TopLevel ? this : (Parent?.FindForm() ?? this);
+
+        private Button MakeWinBtn(string glyph, Color hoverColor, Action onClick)
+        {
+            var b = new Button
+            {
+                Text = glyph,
+                Font = new Font("Segoe MDL2 Assets", 10F),
+                ForeColor = TextWhite,
+                BackColor = PanelDark,
+                FlatStyle = FlatStyle.Flat,
+                Dock = DockStyle.Right,
+                Width = 48,
+                TabStop = false,
+                Cursor = Cursors.Hand
+            };
+            b.FlatAppearance.BorderSize = 0;
+            b.FlatAppearance.MouseOverBackColor = hoverColor;
+            b.FlatAppearance.MouseDownBackColor = ControlPaint.Dark(hoverColor, 0.1f);
+            b.Click += (s, e) => onClick();
+            return b;
         }
 
         // ══════════════════════════════════════════════════════════════════
@@ -264,9 +309,6 @@ namespace POSAPP.Shift
             return pnl;
         }
 
-        // ══════════════════════════════════════════════════════════════════
-        //  CLOSE PANEL
-        // ══════════════════════════════════════════════════════════════════
         private Panel BuildClosePanel()
         {
             var pnl = new Panel { BackColor = Color.Transparent, Width = 580 };
@@ -274,7 +316,7 @@ namespace POSAPP.Shift
 
             // Icon + title
             pnl.Controls.Add(MakeIcon("🔒", new Point(x, y), 36));
-            pnl.Controls.Add(MakeLbl("Close Shift", new Point(x + 46, y + 6),
+            pnl.Controls.Add(MakeLbl("  Shift", new Point(x + 60, y + 8),
                 TextWhite, 14F, w - 46, ContentAlignment.MiddleLeft, FontStyle.Bold));
             y += 54;
 
@@ -290,14 +332,14 @@ namespace POSAPP.Shift
             pnl.Controls.Add(SectionLabel("Session Summary", x, y));
             y += 26;
 
-            var sumCard = Card(x, y, w, 122);
+            var sumCard = Card(x, y, w, 136);
             _lblTxCount = RowLabel(sumCard, "Transactions", 10);
             _lblCashRec = RowLabel(sumCard, "Cash received", 34);
             _lblCardRec = RowLabel(sumCard, "Card received", 58);
             _lblBankRec = RowLabel(sumCard, "Bank received", 82);
             _lblChangeGiven = RowLabel(sumCard, "Change given", 106);
             pnl.Controls.Add(sumCard);
-            y += 134;
+            y += 148;
 
             // ── Expected in drawer bar ────────────────────────────────────
             var drawerBar = new Panel
@@ -342,7 +384,7 @@ namespace POSAPP.Shift
             _pnlTenderStatus.Region = RoundedRegion(_pnlTenderStatus.Size, 8);
             _lblTenderStatus = new Label
             {
-                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
+                Font = new Font("Segoe UI", 9F, FontStyle.Bold),
                 BackColor = Color.Transparent,
                 AutoSize = false,
                 Size = new Size(w - 28, 48),
@@ -358,7 +400,7 @@ namespace POSAPP.Shift
             y += 14;
 
             // ── Close Shift button ────────────────────────────────────────
-            _btnCloseShift = MakeBtn("■  Close Shift", AccRed,
+            _btnCloseShift = MakeBtn("■    Shift", AccRed,
                                      new Point(x, y), new Size(w, 52));
             _btnCloseShift.Click += (s, e) => CloseShift();
             pnl.Controls.Add(_btnCloseShift);
@@ -383,7 +425,13 @@ namespace POSAPP.Shift
             if (InvokeRequired) { BeginInvoke(new Action(ApplyState)); return; }
             ApplyState();
         }
-
+        private void SetCloseEnabled(bool on)
+        {
+            _btnCloseShift.Tag = on ? null : "off";
+            _btnCloseShift.BackColor = on ? AccRed : Color.FromArgb(55, 58, 68);
+            _btnCloseShift.ForeColor = on ? Color.White : TextMuted;
+            _btnCloseShift.Cursor = on ? Cursors.Hand : Cursors.No;
+        }
         private void ApplyState()
         {
             bool open = ShiftState.IsOpen;
@@ -396,12 +444,10 @@ namespace POSAPP.Shift
             _pnlOpen.Visible = !open;
             _pnlClose.Visible = open;
 
-            // Resize centre column to the visible panel
             _pnlCenter.Height = open ? _pnlClose.Height : _pnlOpen.Height;
 
             if (!open)
             {
-                // Float confirmation
                 bool hasFloat = ShiftState.PendingFloat > 0;
                 _lblFloatConfirm.Text = hasFloat
                     ? $"{_currencySymbol} {ShiftState.PendingFloat:F2}  ✔"
@@ -433,8 +479,7 @@ namespace POSAPP.Shift
                                  + ShiftState.BankReceived
                                  + ShiftState.CardReceived
                                  - ShiftState.ChangeGiven;
-                _lblExpectedDrawer.Text =
-                    $"{_currencySymbol} {expected:F2}";
+                _lblExpectedDrawer.Text = $"{_currencySymbol} {expected:F2}";
 
                 // Tender gate
                 int shiftId = ShiftState.ShiftId > 0 ? ShiftState.ShiftId : 1;
@@ -448,17 +493,15 @@ namespace POSAPP.Shift
                         $"Grand total: {_currencySymbol} " +
                         $"{(td.CashCounted + td.CardAmount + td.BankAmount):F2}";
                     _lblTenderStatus.ForeColor = TextGreen;
-                    _btnCloseShift.Enabled = true;
-                    _btnCloseShift.BackColor = AccRed;
+                    SetCloseEnabled(true);
                 }
                 else
                 {
                     _pnlTenderStatus.BackColor = Color.FromArgb(50, 251, 146, 60);
                     _lblTenderStatus.Text =
-                        "⚠  Tender declaration not yet confirmed. Complete it before closing.";
+                        "⚠  Tender declaration not confirmed. Complete it first.";
                     _lblTenderStatus.ForeColor = AccOrange;
-                    _btnCloseShift.Enabled = false;
-                    _btnCloseShift.BackColor = Color.FromArgb(55, 58, 68);
+                    SetCloseEnabled(false);
                 }
             }
         }
@@ -602,17 +645,24 @@ namespace POSAPP.Shift
             return val;
         }
 
-        private Label SectionLabel(string text, int x, int y) => new Label
+        private Control SectionLabel(string text, int x, int y)
         {
-            Text = $"── {text} " + new string('─', 46),
-            Font = new Font("Segoe UI", 8F),
-            ForeColor = TextMuted,
-            BackColor = Color.Transparent,
-            AutoSize = false,
-            Size = new Size(580, 20),
-            Location = new Point(x, y),
-            TextAlign = ContentAlignment.MiddleLeft
-        };
+            var p = new Panel
+            {
+                Size = new Size(580, 20),
+                Location = new Point(x, y),
+                BackColor = Color.Transparent
+            };
+            p.Paint += (s, e) =>
+            {
+                using var f = new Font("Segoe UI", 8F);
+                var sz = TextRenderer.MeasureText(text, f);
+                TextRenderer.DrawText(e.Graphics, text, f, new Point(0, 2), TextMuted);
+                using var pen = new Pen(Border);
+                e.Graphics.DrawLine(pen, sz.Width + 6, 10, p.Width, 10);
+            };
+            return p;
+        }
 
         private Panel Divider(int x, int y, int w, Color color) => new Panel
         {
@@ -625,6 +675,7 @@ namespace POSAPP.Shift
         {
             Text = emoji,
             Font = new Font("Segoe UI Emoji", size * 0.55F),
+            ForeColor = TextWhite,
             BackColor = Color.Transparent,
             AutoSize = true,
             Location = loc
@@ -638,9 +689,9 @@ namespace POSAPP.Shift
         }
 
         private Label MakeLbl(string text, Point loc, Color color, float sz,
-            int width = 0,
-            ContentAlignment align = ContentAlignment.TopLeft,
-            FontStyle style = FontStyle.Regular)
+         int width = 0,
+         ContentAlignment align = ContentAlignment.TopLeft,
+         FontStyle style = FontStyle.Regular)
         {
             return new Label
             {
@@ -649,7 +700,9 @@ namespace POSAPP.Shift
                 ForeColor = color,
                 BackColor = Color.Transparent,
                 AutoSize = width == 0,
-                Size = width > 0 ? new Size(width, 24) : Size.Empty,
+                Size = width > 0
+                    ? new Size(width, Math.Max(24, (int)Math.Ceiling(sz * 2.1f)))
+                    : Size.Empty,
                 Location = loc,
                 TextAlign = align
             };
@@ -672,11 +725,11 @@ namespace POSAPP.Shift
             b.Region = RoundedRegion(size, 8);
             b.MouseEnter += (s, e) =>
             {
-                if (b.Enabled) b.BackColor = ControlPaint.Dark(bg, 0.12f);
+                if ((b.Tag as string) != "off") b.BackColor = ControlPaint.Dark(bg, 0.12f);
             };
             b.MouseLeave += (s, e) =>
             {
-                if (b.Enabled) b.BackColor = bg;
+                if ((b.Tag as string) != "off") b.BackColor = bg;
             };
             return b;
         }
