@@ -25,33 +25,41 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using static POSAPP.login; 
 
 namespace POSAPP.Sales
 {
     public class SalesReturnForm : Form
     {
-        // ── Palette (dark theme) ────────────────────────────────────────────
-        private static readonly Color BgPage = Color.FromArgb(22, 24, 30);
-        private static readonly Color CardWhite = Color.FromArgb(32, 35, 44);
-        private static readonly Color CardBorder = Color.FromArgb(50, 54, 66);
-        private static readonly Color AccGreen = Color.FromArgb(34, 197, 94);
-        private static readonly Color AccBlue = Color.FromArgb(59, 130, 246);
-        private static readonly Color AccOrange = Color.FromArgb(251, 146, 60);
-        private static readonly Color AccRed = Color.FromArgb(239, 68, 68);
-        private static readonly Color AccCyan = Color.FromArgb(20, 184, 166);
-        private static readonly Color AccPurple = Color.FromArgb(168, 130, 246);
-        private static readonly Color TextDark = Color.FromArgb(240, 242, 246);
-        private static readonly Color TextMid = Color.FromArgb(160, 170, 188);
-        private static readonly Color TextLight = Color.FromArgb(100, 110, 130);
-        private static readonly Color TextGreen = Color.FromArgb(52, 211, 153);
-        private static readonly Color HeaderBg = Color.FromArgb(32, 35, 44);
-        private static readonly Color HeaderBorder = Color.FromArgb(50, 54, 66);
-        private static readonly Color BadgeGreen = Color.FromArgb(20, 60, 30);
-        private static readonly Color BadgeGreenT = Color.FromArgb(52, 211, 153);
-        private static readonly Color InputBorder = Color.FromArgb(60, 65, 80);
-        private static readonly Color InputFocus = Color.FromArgb(59, 130, 246);
-        private static readonly Color RowAlt = Color.FromArgb(38, 42, 52);
-        private static readonly Color SummaryBg = Color.FromArgb(28, 32, 42);
+        // ── Palette: soft stone + muted teal ────────────────────────────────
+        private static readonly Color BgPage = Color.FromArgb(226, 231, 237);
+        private static readonly Color CardWhite = Color.FromArgb(240, 243, 247);
+        private static readonly Color CardBorder = Color.FromArgb(200, 208, 219);
+        private static readonly Color AccGreen = Color.FromArgb(5, 150, 105);
+        private static readonly Color AccBlue = Color.FromArgb(15, 118, 110);   // muted teal
+        private static readonly Color AccOrange = Color.FromArgb(194, 98, 30);
+        private static readonly Color AccRed = Color.FromArgb(200, 55, 55);
+        private static readonly Color AccCyan = Color.FromArgb(40, 120, 130);
+        private static readonly Color AccPurple = Color.FromArgb(100, 80, 160);
+        private static readonly Color TextDark = Color.FromArgb(30, 41, 59);
+        private static readonly Color TextMid = Color.FromArgb(82, 96, 115);
+        private static readonly Color TextLight = Color.FromArgb(130, 144, 163);
+        private static readonly Color TextGreen = Color.FromArgb(5, 120, 85);
+        private static readonly Color HeaderBg = Color.FromArgb(240, 243, 247);
+        private static readonly Color HeaderBorder = Color.FromArgb(200, 208, 219);
+        private static readonly Color BadgeGreen = Color.FromArgb(209, 237, 224);
+        private static readonly Color BadgeGreenT = Color.FromArgb(5, 120, 85);
+        private static readonly Color InputBorder = Color.FromArgb(180, 190, 204);
+        private static readonly Color InputFocus = Color.FromArgb(15, 118, 110);
+        private static readonly Color RowAlt = Color.FromArgb(232, 236, 242);
+        private static readonly Color SummaryBg = Color.FromArgb(222, 228, 236);
+
+        // Added: used instead of Color.White for inputs and grids
+        private static readonly Color InputBg = Color.FromArgb(249, 250, 252);
+        private static readonly Color InputBg2 = Color.FromArgb(232, 236, 242);
+        private static readonly Color SelectBg = Color.FromArgb(205, 229, 228);
+        private static readonly Color QtyCellBg = Color.FromArgb(250, 244, 222);
+        private static readonly Color QtyCellSel = Color.FromArgb(243, 232, 190);
 
         // ── Return policy ────────────────────────────────────────────────────
         private const int MAX_RETURN_DAYS = 30;
@@ -72,6 +80,7 @@ namespace POSAPP.Sales
         private string _currencySymbol = "P";
         private string _companyName = "", _companyAddress = "", _companyPhone = "", _companyVat = "", _companyWebsite = "", _salesOfficeInfo = "";
 
+   
         private int? _selectedCustomerId;
         private string _selectedCustomerName = "";
         private List<POSAPP.CustomerFullDto> _customers = new List<POSAPP.CustomerFullDto>(); 
@@ -90,6 +99,8 @@ namespace POSAPP.Sales
         private Point _dragCursor, _dragForm;
         private bool _isMaximized = false;
         private Rectangle _normalBounds;
+        private Panel _cardInvoiceList;
+        private Label _lblInvoiceListHead;
 
         // ── Controls ─────────────────────────────────────────────────────────
         private Panel panelHeader, panelFooter, panelContent;
@@ -97,9 +108,9 @@ namespace POSAPP.Sales
         private Button btnProcessReturn, btnCancel, btnMaximize;
         private Panel _scrollOuter;
 
-        private ComboBox cmbCustomer;
-        private FlowLayoutPanel flowInvoices;
-        private Panel panelCandidateLines;
+        private ComboBox cmbCustomer; 
+        private DataGridView gridInvoices;
+        private DataGridView gridCandidates;
         private Label lblCandidateHeader;
         private Button btnBackToInvoices;
 
@@ -253,7 +264,7 @@ namespace POSAPP.Sales
             BuildScrollArea();
 
             KeyDown += (s, e) => { if (e.KeyCode == Keys.Escape) Close(); };
-            Shown += (s, e) => { LayoutFooterButtons(); LoadCustomers(); cmbCustomer?.Focus(); };
+            Shown += (s, e) => { LayoutFooterButtons(); LoadCustomers(); };
         }
 
         private void BuildHeader()
@@ -335,7 +346,7 @@ namespace POSAPP.Sales
                 TextAlign = ContentAlignment.MiddleLeft
             };
 
-            btnCancel = MakeFooterBtn("Cancel", Color.FromArgb(229, 231, 235), TextMid, new Size(100, 40));
+            btnCancel = MakeFooterBtn("Cancel", Color.FromArgb(205, 212, 224), TextDark, new Size(100, 40));
             btnCancel.Click += (s, e) => Close();
 
             btnProcessReturn = MakeFooterBtn("Process Return", AccGreen, Color.White, new Size(160, 40));
@@ -363,6 +374,7 @@ namespace POSAPP.Sales
         {
             _scrollOuter = new Panel { BackColor = BgPage, Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(0) };
             Controls.Add(_scrollOuter);
+            _scrollOuter.BringToFront();     
 
             panelContent = new Panel { BackColor = BgPage, AutoSize = true, Width = _scrollOuter.ClientSize.Width };
             _scrollOuter.Controls.Add(panelContent);
@@ -376,28 +388,40 @@ namespace POSAPP.Sales
             BuildSummaryCard();
             RelayoutCards();
         }
-
-        // ══════════════════════════════════════════════════════════════════
-        //  CARD 1 — CUSTOMER PICKER   (concept: React's Customer dropdown)
-        // ══════════════════════════════════════════════════════════════════
+        private Label _lblCustomerHint;
         private Panel _cardCustomer;
         private void BuildCustomerCard()
         {
             _cardCustomer = MakeCard();
-            AddCardLabel(_cardCustomer, "Customer", 0, new Font("Segoe UI", 9F, FontStyle.Bold), TextDark);
+
+            // Heading
+            AddCardLabel(_cardCustomer, "Choose Customer", 0, new Font("Segoe UI", 11F, FontStyle.Bold), TextDark);
+
+            // Sub-hint (also shows "Loading customers..." while the dropdown is locked)
+            _lblCustomerHint = new Label
+            {
+                Text = "Loading customers...",
+                Font = new Font("Segoe UI", 8.5F),
+                ForeColor = TextMid,
+                BackColor = Color.Transparent,
+                AutoSize = true,
+                Location = new Point(0, 26)
+            };
+            _cardCustomer.Controls.Add(_lblCustomerHint);
 
             cmbCustomer = new ComboBox
             {
                 Font = new Font("Segoe UI", 10.5F),
                 ForeColor = TextDark,
-                BackColor = Color.FromArgb(28, 32, 42),
+                BackColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
                 DropDownStyle = ComboBoxStyle.DropDown,
                 AutoCompleteMode = AutoCompleteMode.SuggestAppend,
                 AutoCompleteSource = AutoCompleteSource.ListItems,
                 DisplayMember = "CustomerName",
                 Size = new Size(420, 30),
-                Location = new Point(0, 34)
+                Location = new Point(0, 52),
+                Enabled = false                      // locked until customers are bound
             };
             cmbCustomer.SelectedIndexChanged += (s, e) =>
             {
@@ -415,6 +439,10 @@ namespace POSAPP.Sales
 
         private async void LoadCustomers()
         {
+            cmbCustomer.Enabled = false;
+            _lblCustomerHint.Text = "Loading customers...";
+            _lblCustomerHint.ForeColor = TextMid;
+
             try
             {
                 _customers = await SalesReturnRepository.GetActiveCustomersAsync(_companyId)
@@ -425,44 +453,27 @@ namespace POSAPP.Sales
                 ShowStatus("Could not load customers: " + ex.Message, false);
                 _customers = new List<POSAPP.CustomerFullDto>();
             }
+
             cmbCustomer.Items.Clear();
             cmbCustomer.Items.AddRange(_customers.Cast<object>().ToArray());
+
+            if (_customers.Count == 0)
+            {
+                _lblCustomerHint.Text = "No customers available.";
+                _lblCustomerHint.ForeColor = AccRed;
+                return;                              // stays locked, nothing to pick
+            }
+
+            cmbCustomer.Enabled = true;              // unlock only after the list is bound
+            _lblCustomerHint.Text = "Select the customer whose invoice should be  returned.";
+            cmbCustomer.Focus();
         }
 
         // ══════════════════════════════════════════════════════════════════
         //  CARD 2 — INVOICES FOR THE SELECTED CUSTOMER  (React's invoice grid)
         // ══════════════════════════════════════════════════════════════════
-        private Panel _cardInvoiceList;
-        private Label _lblInvoiceListHead;
 
-        private void BuildInvoiceListCard()
-        {
-            _cardInvoiceList = MakeCard();
-            _cardInvoiceList.Visible = false;
 
-            _lblInvoiceListHead = new Label
-            {
-                Text = "Invoices",
-                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
-                ForeColor = TextDark,
-                BackColor = Color.Transparent,
-                AutoSize = true,
-                Location = new Point(0, 0)
-            };
-
-            flowInvoices = new FlowLayoutPanel
-            {
-                Location = new Point(0, 30),
-                AutoSize = true,
-                FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = true,
-                BackColor = Color.Transparent
-            };
-
-            _cardInvoiceList.Controls.Add(_lblInvoiceListHead);
-            _cardInvoiceList.Controls.Add(flowInvoices);
-            panelContent.Controls.Add(_cardInvoiceList);
-        }
 
         private async void LoadCustomerInvoices()
         {
@@ -491,67 +502,65 @@ namespace POSAPP.Sales
                 : $"{_customerInvoices.Count} invoice(s) found for {_selectedCustomerName}. Select one to view items.", true);
         }
 
+        private void BuildInvoiceListCard()
+        {
+            _cardInvoiceList = MakeCard();
+            _cardInvoiceList.Visible = false;
+
+            _lblInvoiceListHead = new Label
+            {
+                Text = "Invoices  —  click a row to view its items",
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+                ForeColor = TextDark,
+                BackColor = Color.Transparent,
+                AutoSize = true,
+                Location = new Point(0, 0)
+            };
+
+            gridInvoices = MakeGrid();
+            gridInvoices.Location = new Point(0, 32);
+            gridInvoices.Size = new Size(600, 200);
+            gridInvoices.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+
+            AddCol(gridInvoices, "InvoiceNo", "INVOICE NO", 26);
+            AddCol(gridInvoices, "SONo", "SO NUMBER", 24);
+            AddCol(gridInvoices, "Date", "DATE", 18);
+            AddCol(gridInvoices, "Items", "ITEMS", 10, DataGridViewContentAlignment.MiddleCenter);
+            AddCol(gridInvoices, "Total", "TOTAL", 22, DataGridViewContentAlignment.MiddleRight);
+
+            gridInvoices.CellClick += (s, e) =>
+            {
+                if (e.RowIndex < 0) return;
+                if (gridInvoices.Rows[e.RowIndex].Tag is string invNo) SelectInvoice(invNo);
+            };
+
+            _cardInvoiceList.Controls.Add(_lblInvoiceListHead);
+            _cardInvoiceList.Controls.Add(gridInvoices);
+            panelContent.Controls.Add(_cardInvoiceList);
+        }
+
+        // name kept so LoadCustomerInvoices() needs no change
         private void RebuildInvoiceCards()
         {
-            foreach (Control c in flowInvoices.Controls) c.Dispose();
-            flowInvoices.Controls.Clear();
+            gridInvoices.Rows.Clear();
 
             foreach (var inv in _customerInvoices)
             {
-                var card = new Panel
-                {
-                    Size = new Size(220, 96),
-                    Margin = new Padding(0, 0, 10, 10),
-                    BackColor = Color.FromArgb(28, 32, 42),
-                    Cursor = Cursors.Hand,
-                    Tag = inv.InvoiceNo
-                };
-                DrawRoundedBorder(card, InputBorder, 8);
-
-                var lblNo = new Label
-                {
-                    Text = inv.InvoiceNo,
-                    Font = new Font("Segoe UI", 10F, FontStyle.Bold),
-                    ForeColor = AccBlue,
-                    BackColor = Color.Transparent,
-                    AutoSize = true,
-                    Location = new Point(12, 10)
-                };
-                var lblSo = new Label
-                {
-                    Text = $"SO: {(string.IsNullOrWhiteSpace(inv.SONumber) ? "-" : inv.SONumber)}  ·  {inv.Lines.Count} item(s)",
-                    Font = new Font("Segoe UI", 8.5F),
-                    ForeColor = TextMid,
-                    BackColor = Color.Transparent,
-                    AutoSize = true,
-                    Location = new Point(12, 32)
-                };
-                var lblDate = new Label
-                {
-                    Text = inv.InvoiceDate.ToString("dd MMM yyyy"),
-                    Font = new Font("Segoe UI", 8.5F),
-                    ForeColor = TextMid,
-                    BackColor = Color.Transparent,
-                    AutoSize = true,
-                    Location = new Point(12, 52)
-                };
-                var lblTotal = new Label
-                {
-                    Text = Fmt(inv.Total),
-                    Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
-                    ForeColor = TextDark,
-                    BackColor = Color.Transparent,
-                    AutoSize = true,
-                    Location = new Point(12, 72)
-                };
-
-                card.Controls.AddRange(new Control[] { lblNo, lblSo, lblDate, lblTotal });
-                EventHandler clickHandler = (s, e) => SelectInvoice(inv.InvoiceNo);
-                card.Click += clickHandler;
-                foreach (Control child in card.Controls) child.Click += clickHandler;
-
-                flowInvoices.Controls.Add(card);
+                int i = gridInvoices.Rows.Add(
+                    inv.InvoiceNo,
+                    string.IsNullOrWhiteSpace(inv.SONumber) ? "-" : inv.SONumber,
+                    inv.InvoiceDate.ToString("dd MMM yyyy"),
+                    inv.Lines.Count,
+                    Fmt(inv.Total));
+                gridInvoices.Rows[i].Tag = inv.InvoiceNo;
+                gridInvoices.Rows[i].Cells["InvoiceNo"].Style.ForeColor = AccBlue;
+                gridInvoices.Rows[i].Cells["InvoiceNo"].Style.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
             }
+
+            int visibleRows = Math.Min(Math.Max(gridInvoices.Rows.Count, 1), 7);
+            gridInvoices.Height = gridInvoices.ColumnHeadersHeight + visibleRows * gridInvoices.RowTemplate.Height + 2;
+            gridInvoices.ClearSelection();
+            FitCard(_cardInvoiceList);
         }
 
         // ══════════════════════════════════════════════════════════════════
@@ -566,7 +575,7 @@ namespace POSAPP.Sales
             _cardCandidateLines = MakeCard();
             _cardCandidateLines.Visible = false;
 
-            panelCandidateHeader = new Panel { BackColor = Color.Transparent, Size = new Size(1, 28), Location = Point.Empty };
+            panelCandidateHeader = new Panel { BackColor = Color.Transparent, Size = new Size(700, 28), Location = Point.Empty };
 
             lblCandidateHeader = new Label
             {
@@ -587,7 +596,7 @@ namespace POSAPP.Sales
                 FlatStyle = FlatStyle.Flat,
                 AutoSize = true,
                 Cursor = Cursors.Hand,
-                Location = new Point(220, 4)
+                Location = new Point(360, 0)
             };
             btnBackToInvoices.FlatAppearance.BorderSize = 0;
             btnBackToInvoices.Click += (s, e) =>
@@ -596,14 +605,125 @@ namespace POSAPP.Sales
                 _cardCandidateLines.Visible = false;
                 RelayoutCards();
             };
-
             panelCandidateHeader.Controls.AddRange(new Control[] { lblCandidateHeader, btnBackToInvoices });
-            _cardCandidateLines.Controls.Add(panelCandidateHeader);
 
-            panelCandidateLines = new Panel { BackColor = Color.Transparent, AutoSize = true, Location = new Point(0, 36), Width = 1 };
-            _cardCandidateLines.Controls.Add(panelCandidateLines);
-            _cardCandidateLines.AutoSize = true;
+            gridCandidates = MakeGrid(readOnly: false);
+            gridCandidates.Location = new Point(0, 36);
+            gridCandidates.Size = new Size(600, 200);
+            gridCandidates.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            gridCandidates.Cursor = Cursors.Default;
+            gridCandidates.EditMode = DataGridViewEditMode.EditOnEnter;
+
+            AddCol(gridCandidates, "Item", "ITEM", 30);
+            AddCol(gridCandidates, "Avail", "AVAIL QTY", 11, DataGridViewContentAlignment.MiddleCenter);
+            AddCol(gridCandidates, "UOM", "UOM", 8, DataGridViewContentAlignment.MiddleCenter);
+            AddCol(gridCandidates, "Price", "PRICE", 13, DataGridViewContentAlignment.MiddleRight);
+            AddCol(gridCandidates, "Disc", "DISC %", 8, DataGridViewContentAlignment.MiddleCenter);
+            AddCol(gridCandidates, "Tax", "TAX %", 8, DataGridViewContentAlignment.MiddleCenter);
+            var qtyCol = AddCol(gridCandidates, "RetQty", "RETURN QTY", 12,
+                    DataGridViewContentAlignment.MiddleCenter, readOnly: false);
+            qtyCol.DefaultCellStyle.BackColor = Color.FromArgb(255, 251, 235);          // pale yellow = "type here"
+            qtyCol.DefaultCellStyle.ForeColor = TextDark;
+            qtyCol.DefaultCellStyle.SelectionBackColor = Color.FromArgb(254, 243, 199);
+            qtyCol.DefaultCellStyle.SelectionForeColor = TextDark;
+            qtyCol.DefaultCellStyle.Font = new Font("Segoe UI", 9.5F, FontStyle.Bold);
+
+            gridCandidates.Columns.Add(new DataGridViewButtonColumn
+            {
+                Name = "Action",
+                HeaderText = "",
+                FillWeight = 12,
+                FlatStyle = FlatStyle.Flat,
+                SortMode = DataGridViewColumnSortMode.NotSortable
+            });
+
+            // digits only in the Return Qty editor
+            gridCandidates.EditingControlShowing += (s, e) =>
+            {
+                if (gridCandidates.CurrentCell?.OwningColumn.Name == "RetQty" && e.Control is TextBox tb)
+                {
+                    tb.KeyPress -= QtyDigitsOnly;
+                    tb.KeyPress += QtyDigitsOnly;
+                }
+            };
+
+            // clamp + store the typed qty
+            gridCandidates.CellEndEdit += (s, e) =>
+            {
+                if (e.RowIndex < 0 || gridCandidates.Columns[e.ColumnIndex].Name != "RetQty") return;
+                if (!(gridCandidates.Rows[e.RowIndex].Tag is CandidateLine c)) return;
+
+                int.TryParse(Convert.ToString(gridCandidates.Rows[e.RowIndex].Cells["RetQty"].Value)?.Trim(), out int q);
+                c.ReturnQty = Math.Max(0, Math.Min(q, c.PurchasedQty));
+                gridCandidates.Rows[e.RowIndex].Cells["RetQty"].Value = c.ReturnQty > 0 ? c.ReturnQty.ToString() : "";
+            };
+
+            // Add button
+            gridCandidates.CellContentClick += (s, e) =>
+            {
+                if (e.RowIndex < 0 || gridCandidates.Columns[e.ColumnIndex].Name != "Action") return;
+                if (!(gridCandidates.Rows[e.RowIndex].Tag is CandidateLine c) || c.Added) return;
+
+                gridCandidates.EndEdit();
+                int.TryParse(Convert.ToString(gridCandidates.Rows[e.RowIndex].Cells["RetQty"].Value)?.Trim(), out int q);
+                c.ReturnQty = Math.Max(0, Math.Min(q, c.PurchasedQty));
+
+                BeginInvoke(new Action(() => AddCandidateLineToReturn(c)));   // rebuild after the click finishes
+            };
+
+            _cardCandidateLines.Controls.Add(panelCandidateHeader);
+            _cardCandidateLines.Controls.Add(gridCandidates);
             panelContent.Controls.Add(_cardCandidateLines);
+        }
+
+        private static void QtyDigitsOnly(object sender, KeyPressEventArgs e)
+        {
+            if (!char.IsControl(e.KeyChar) && !char.IsDigit(e.KeyChar)) e.Handled = true;
+        }
+
+        private void RebuildCandidateRows()
+        {
+            gridCandidates.Rows.Clear();
+
+            foreach (var c in _candidateLines)
+            {
+                int i = gridCandidates.Rows.Add(
+                    c.Name,
+                    c.PurchasedQty,
+                    c.UOM,
+                    Fmt(c.UnitPrice),
+                    c.DiscountPct > 0 ? $"{c.DiscountPct:F1}%" : "—",
+                    c.TaxPct > 0 ? $"{c.TaxPct:F1}%" : "—",
+                    c.ReturnQty > 0 ? c.ReturnQty.ToString() : "",
+                    c.Added ? "✓ Added" : "Add");
+
+                var row = gridCandidates.Rows[i];
+                row.Tag = c;
+                row.Cells["Item"].Style.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+                row.Cells["UOM"].Style.ForeColor = AccCyan;
+                row.Cells["Disc"].Style.ForeColor = AccOrange;
+                row.Cells["Tax"].Style.ForeColor = AccBlue;
+
+                var btn = row.Cells["Action"];
+                btn.Style.BackColor = c.Added ? BadgeGreen : AccBlue;
+                btn.Style.ForeColor = c.Added ? BadgeGreenT : Color.White;
+                btn.Style.SelectionBackColor = btn.Style.BackColor;
+                btn.Style.SelectionForeColor = btn.Style.ForeColor;
+                btn.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
+
+                if (c.Added)
+                {
+                    row.Cells["RetQty"].ReadOnly = true;
+                    row.Cells["RetQty"].Style.BackColor = Color.FromArgb(241, 245, 249);
+                    row.Cells["RetQty"].Style.ForeColor = TextLight;
+                }
+            }
+
+            int visibleRows = Math.Min(Math.Max(gridCandidates.Rows.Count, 1), 8);
+            gridCandidates.Height = gridCandidates.ColumnHeadersHeight + visibleRows * gridCandidates.RowTemplate.Height + 2;
+            gridCandidates.ClearSelection();
+            FitCard(_cardCandidateLines);
+            RelayoutCards();
         }
 
 
@@ -665,117 +785,8 @@ namespace POSAPP.Sales
                 ? $"Invoice {invoiceNo} has already been fully returned."
                 : $"{_candidateLines.Count} returnable line(s) on {invoiceNo}. Set a Return Qty and click Add.", true);
         }
-
-        private void RebuildCandidateRows()
-        {
-            foreach (Control c in panelCandidateLines.Controls) c.Dispose();
-            panelCandidateLines.Controls.Clear();
-
-            int y = 0;
-            for (int i = 0; i < _candidateLines.Count; i++)
-            {
-                panelCandidateLines.Controls.Add(BuildCandidateRow(_candidateLines[i], y, i % 2 == 0));
-                y += 46;
-            }
-            panelCandidateLines.Height = Math.Max(1, y);
-            RelayoutCards();
-        }
-
-        private Panel BuildCandidateRow(CandidateLine c, int yOffset, bool alt)
-        {
-            const int ROW_H = 44;
-            int rowW = Math.Max(1, panelCandidateLines.Width);
-
-            var row = new Panel
-            {
-                BackColor = alt ? CardWhite : RowAlt,
-                Size = new Size(rowW, ROW_H),
-                Location = new Point(0, yOffset),
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
-            };
-
-            row.Controls.Add(new Label
-            {
-                Text = c.Name,
-                Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
-                ForeColor = TextDark,
-                BackColor = Color.Transparent,
-                Size = new Size(220, ROW_H),
-                Location = new Point(8, 0),
-                TextAlign = ContentAlignment.MiddleLeft
-            });
-
-            row.Controls.Add(new Label
-            {
-                Text = $"Qty: {c.PurchasedQty}",
-                Font = new Font("Segoe UI", 8.5F),
-                ForeColor = TextMid,
-                BackColor = Color.Transparent,
-                Size = new Size(70, ROW_H),
-                Location = new Point(236, 0),
-                TextAlign = ContentAlignment.MiddleCenter
-            });
-
-            row.Controls.Add(new Label
-            {
-                Text = c.UOM,
-                Font = new Font("Segoe UI", 8.5F),
-                ForeColor = AccCyan,
-                BackColor = Color.Transparent,
-                Size = new Size(44, ROW_H),
-                Location = new Point(306, 0),
-                TextAlign = ContentAlignment.MiddleCenter
-            });
-
-            row.Controls.Add(new Label
-            {
-                Text = Fmt(c.UnitPrice),
-                Font = new Font("Segoe UI", 8.5F),
-                ForeColor = TextMid,
-                BackColor = Color.Transparent,
-                Size = new Size(84, ROW_H),
-                Location = new Point(354, 0),
-                TextAlign = ContentAlignment.MiddleLeft
-            });
-
-            var tbQty = new TextBox
-            {
-                Text = c.ReturnQty > 0 ? c.ReturnQty.ToString() : "",
-                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
-                ForeColor = TextDark,
-                BackColor = Color.FromArgb(42, 46, 58),
-                BorderStyle = BorderStyle.FixedSingle,
-                TextAlign = HorizontalAlignment.Center,
-                Size = new Size(56, 26),
-                Location = new Point(446, (ROW_H - 26) / 2),
-                Enabled = !c.Added
-            };
-            tbQty.KeyPress += (s, e) => { if (!char.IsControl(e.KeyChar) && !char.IsDigit(e.KeyChar)) e.Handled = true; };
-            tbQty.TextChanged += (s, e) =>
-            {
-                int.TryParse(tbQty.Text.Trim(), out int q);
-                c.ReturnQty = Math.Max(0, Math.Min(q, c.PurchasedQty));
-            };
-
-            var btnAdd = new Button
-            {
-                Text = c.Added ? "✓ Added" : "Add",
-                Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
-                ForeColor = c.Added ? BadgeGreenT : Color.White,
-                BackColor = c.Added ? BadgeGreen : AccBlue,
-                FlatStyle = FlatStyle.Flat,
-                Size = new Size(84, 28),
-                Location = new Point(rowW - 96, (ROW_H - 28) / 2),
-                Anchor = AnchorStyles.Top | AnchorStyles.Right,
-                Cursor = Cursors.Hand,
-                Enabled = !c.Added
-            };
-            btnAdd.FlatAppearance.BorderSize = 0;
-            btnAdd.Click += (s, e) => AddCandidateLineToReturn(c);
-
-            row.Controls.AddRange(new Control[] { tbQty, btnAdd });
-            return row;
-        }
+         
+         
 
         private void AddCandidateLineToReturn(CandidateLine c)
         {
@@ -1041,10 +1052,19 @@ namespace POSAPP.Sales
                 if (card == null) continue;
                 card.Width = cardW;
                 card.Location = new Point(CARD_MARGIN, y);
-                if (card == _cardItems && panelLines != null) panelLines.Width = cardW - CARD_PAD * 2;
-                if (card == _cardCandidateLines && panelCandidateLines != null) panelCandidateLines.Width = cardW - CARD_PAD * 2;
+
+                int inner = cardW - CARD_PAD * 2;
+                if (card == _cardItems && panelLines != null) panelLines.Width = inner;
+                if (card == _cardInvoiceList && gridInvoices != null) gridInvoices.Width = inner;
+                if (card == _cardCandidateLines && gridCandidates != null)
+                {
+                    gridCandidates.Width = inner;
+                    panelCandidateHeader.Width = inner;
+                }
+
                 if (card.Visible) y += card.Height + CARD_MARGIN;
             }
+            panelContent.Height = y;
             panelContent.Height = y;
         }
 
@@ -1080,7 +1100,7 @@ namespace POSAPP.Sales
             };
             row.Paint += (s, e) =>
             {
-                using var pen = new Pen(Color.FromArgb(50, 54, 66), 1f);
+                using var pen = new Pen(CardBorder, 1f);
                 e.Graphics.DrawLine(pen, 0, ROW_H - 1, ((Panel)s).Width, ROW_H - 1);
             };
 
@@ -1150,23 +1170,29 @@ namespace POSAPP.Sales
                 TextAlign = ContentAlignment.MiddleCenter
             });
 
+            // ── Return Qty box (white with a thin border) ──
             var spWrapper = new Panel
             {
-                BackColor = Color.FromArgb(42, 46, 58),
+                BackColor = Color.White,
                 Size = new Size(64, 30),
                 Location = new Point(436, (ROW_H - 30) / 2)
             };
-            spWrapper.Region = MakeRoundedRegion(spWrapper.Size, 6);
+            spWrapper.Paint += (s, e) =>
+            {
+                using var pen = new Pen(InputBorder);
+                e.Graphics.DrawRectangle(pen, 0, 0, spWrapper.Width - 1, spWrapper.Height - 1);
+            };
+
             var tbQty = new TextBox
             {
                 Text = line.ReturnQty.ToString(),
                 Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
                 ForeColor = TextDark,
-                BackColor = Color.FromArgb(42, 46, 58),
+                BackColor = Color.White,
                 BorderStyle = BorderStyle.None,
                 TextAlign = HorizontalAlignment.Center,
                 Size = new Size(56, 24),
-                Location = new Point(4, 3),
+                Location = new Point(4, 5),
                 MaxLength = 4
             };
             tbQty.KeyPress += (s, e) => { if (!char.IsControl(e.KeyChar) && !char.IsDigit(e.KeyChar)) e.Handled = true; };
@@ -1185,8 +1211,8 @@ namespace POSAPP.Sales
             var cmbReason = new ComboBox
             {
                 Font = new Font("Segoe UI", 8.5F),
-                ForeColor = TextMid,
-                BackColor = Color.FromArgb(42, 46, 58),
+                ForeColor = TextDark,
+                BackColor = Color.White,
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 FlatStyle = FlatStyle.Flat,
                 Size = new Size(92, 28),
@@ -1250,6 +1276,7 @@ namespace POSAPP.Sales
             lblRefundTotal.Text = total > 0 ? $"Refund:  {Fmt(total)}" : "";
             lblRefundTotal.ForeColor = total > 0 ? TextGreen : TextMid;
         }
+   
 
         private async void BtnProcessReturn_Click(object sender, EventArgs e)
         {
@@ -1905,16 +1932,85 @@ namespace POSAPP.Sales
                 using var path = RoundedPath(new Rectangle(0, 0, p.Width - 1, p.Height - 1), CARD_RADIUS);
                 g.DrawPath(pen, path);
             };
-            p.ControlAdded += (s, e) => FitCard(p);
+            p.ControlAdded += (s, e) =>
+            {
+                e.Control.Location = new Point(e.Control.Left + CARD_PAD, e.Control.Top + CARD_PAD);
+                FitCard(p);
+            };
             p.Resize += (s, e) => FitCard(p);
             return p;
+        }
+
+        private DataGridView MakeGrid(bool readOnly = true)
+        {
+            var g = new DataGridView
+            {
+                BackgroundColor = CardWhite,
+                BorderStyle = BorderStyle.None,
+                AllowUserToAddRows = false,
+                AllowUserToDeleteRows = false,
+                AllowUserToResizeRows = false,
+                RowHeadersVisible = false,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                MultiSelect = false,
+                ReadOnly = readOnly,
+                EnableHeadersVisualStyles = false,
+                GridColor = CardBorder,
+                CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal,
+                ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None,
+                ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing,
+                ColumnHeadersHeight = 34,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+                ScrollBars = ScrollBars.Vertical,
+                Cursor = Cursors.Hand
+            };
+            g.RowTemplate.Height = 36;
+
+            Color selBg = Color.FromArgb(219, 234, 254);   // soft blue
+
+            g.DefaultCellStyle.BackColor = Color.White;
+            g.DefaultCellStyle.ForeColor = TextDark;
+            g.DefaultCellStyle.Font = new Font("Segoe UI", 9F);
+            g.DefaultCellStyle.SelectionBackColor = selBg;
+            g.DefaultCellStyle.SelectionForeColor = AccBlue;      // navy text on soft blue
+            g.DefaultCellStyle.Padding = new Padding(6, 0, 6, 0);
+
+            g.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(248, 250, 252);
+            g.AlternatingRowsDefaultCellStyle.SelectionBackColor = selBg;
+            g.AlternatingRowsDefaultCellStyle.SelectionForeColor = AccBlue;
+
+            g.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(241, 245, 249);
+            g.ColumnHeadersDefaultCellStyle.ForeColor = AccBlue;
+            g.ColumnHeadersDefaultCellStyle.SelectionBackColor = Color.FromArgb(241, 245, 249);
+            g.ColumnHeadersDefaultCellStyle.SelectionForeColor = AccBlue;
+            g.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI", 8.5F, FontStyle.Bold);
+            g.ColumnHeadersDefaultCellStyle.Padding = new Padding(6, 0, 6, 0);
+            return g;
+        }
+
+        private static DataGridViewTextBoxColumn AddCol(DataGridView g, string name, string header,
+            float weight, DataGridViewContentAlignment align = DataGridViewContentAlignment.MiddleLeft,
+            bool readOnly = true)
+        {
+            var c = new DataGridViewTextBoxColumn
+            {
+                Name = name,
+                HeaderText = header,
+                FillWeight = weight,
+                ReadOnly = readOnly,
+                SortMode = DataGridViewColumnSortMode.NotSortable
+            };
+            c.DefaultCellStyle.Alignment = align;
+            c.HeaderCell.Style.Alignment = align;
+            g.Columns.Add(c);
+            return c;
         }
 
         private void FitCard(Panel card)
         {
             if (card.Controls.Count == 0) return;
-            int maxBottom = card.Controls.OfType<Control>().Max(c => c.Bottom + CARD_PAD);
-            if (card.Height != maxBottom + CARD_PAD) card.Height = maxBottom + CARD_PAD;
+            int maxBottom = card.Controls.OfType<Control>().Max(c => c.Bottom) + CARD_PAD;
+            if (card.Height != maxBottom) card.Height = maxBottom;
         }
 
         private static void AddCardLabel(Panel card, string text, int y, Font f, Color fc)

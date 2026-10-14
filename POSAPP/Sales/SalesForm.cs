@@ -105,7 +105,7 @@ namespace POSAPP
         private bool _lastOrderQueuedOffline = false;
 
         private const int PRODUCT_SYNC_INTERVAL_MS = 5 * 60 * 1000;      // 5 minutes
-        private const int OFFLINE_ORDER_SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+        private const int OFFLINE_ORDER_SYNC_INTERVAL_MS = 60 * 1000;   // was 5 min
 
         // Add this anywhere near the top of SalesForm class, with the other properties
         // public int CompanyId => _companyId;
@@ -495,7 +495,7 @@ namespace POSAPP
             // ── Phase 2: refresh from API in background, then keep syncing every 5 min ─
             _ = RefreshProductsFromApiAsync();
             StartProductSyncTimer();
-            //StartOfflineOrderSyncTimer();
+            StartOfflineOrderSyncTimer();
             StartStockSyncTimer();
             nudDiscount.Value = _defaultDiscountPct;
             RefreshCart();
@@ -595,6 +595,14 @@ namespace POSAPP
         // ══════════════════════════════════════════════════════════════════════
         private enum AlertKind { Error, Warning, Info, Success }
 
+        private void StartOfflineOrderSyncTimer()
+        {
+            if (_offlineOrderSyncTimer != null) return;
+            _offlineOrderSyncTimer = new System.Windows.Forms.Timer { Interval = OFFLINE_ORDER_SYNC_INTERVAL_MS };
+            _offlineOrderSyncTimer.Tick += async (s, e) => await SyncAllOfflineDataAsync().ConfigureAwait(true);
+            _offlineOrderSyncTimer.Start();
+            _ = SyncAllOfflineDataAsync();      // pick up anything queued in a previous session
+        }
         private async Task LoadPaymentTermsAsync()
         {
             try
@@ -1796,6 +1804,20 @@ CREATE TABLE IF NOT EXISTS ItemIdMapCache (
     LastSyncUtc   TEXT,
     PRIMARY KEY (CompanyID, ItemName)
 );
+CREATE TABLE IF NOT EXISTS CustomerCache (
+    CompanyID INTEGER NOT NULL, 
+CustomerID INTEGER NOT NULL,
+    CustomerCode TEXT, 
+CustomerName TEXT, 
+Address TEXT, 
+City TEXT, 
+Country TEXT,
+    Mobile TEXT, 
+Email TEXT, 
+Status INTEGER, 
+LastSyncUtc TEXT,
+    PRIMARY KEY (CompanyID, CustomerID)
+);
 CREATE INDEX IF NOT EXISTS IX_ItemIdMapCache_Name
     ON ItemIdMapCache(CompanyID, ItemName);
 CREATE TABLE IF NOT EXISTS PendingCustomerPayments (
@@ -1824,10 +1846,32 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                     }
                     catch { /* column already exists — ignore, same pattern used elsewhere in this app */ }
                 }
+                // inside CREATE TABLE batch (CustomerCache is used by your code but missing here):
+                // CREATE TABLE IF NOT EXISTS CustomerCache (
+                //     CompanyID INTEGER NOT NULL, CustomerID INTEGER NOT NULL,
+                //     CustomerCode TEXT, CustomerName TEXT, Address TEXT, City TEXT, Country TEXT,
+                //     Mobile TEXT, Email TEXT, Status INTEGER, LastSyncUtc TEXT,
+                //     PRIMARY KEY (CompanyID, CustomerID));
+
+                cmd.ExecuteNonQuery();          // ← MOVE the batch execute BEFORE the TryAddColumn calls
+
                 TryAddColumn("D365ItemCache", "BaseUOM INTEGER NOT NULL DEFAULT 1");
                 TryAddColumn("D365ItemCache", "BaseUOMName TEXT");
                 TryAddColumn("D365ItemCache", "PackUomJson TEXT");
-                cmd.ExecuteNonQuery();
+
+                TryAddColumn("PendingSalesOrders", "Stage INTEGER NOT NULL DEFAULT 0");
+                TryAddColumn("PendingSalesOrders", "SONumber TEXT");
+                TryAddColumn("PendingSalesOrders", "InvoiceId INTEGER");
+                TryAddColumn("PendingSalesOrders", "PaymentId INTEGER");
+                TryAddColumn("PendingSalesOrders", "CashAmt REAL NOT NULL DEFAULT 0");
+                TryAddColumn("PendingSalesOrders", "BankAmt REAL NOT NULL DEFAULT 0");
+                TryAddColumn("PendingSalesOrders", "CardAmt REAL NOT NULL DEFAULT 0");
+                TryAddColumn("PendingSalesOrders", "BankAccountId INTEGER");
+                TryAddColumn("PendingSalesOrders", "BankAccountNo TEXT");
+                TryAddColumn("PendingSalesOrders", "CustomerId INTEGER NOT NULL DEFAULT 0");
+                TryAddColumn("PendingSalesOrders", "GrandTotal REAL NOT NULL DEFAULT 0");
+                TryAddColumn("PendingSalesOrders", "CreatedBy INTEGER NOT NULL DEFAULT 0");
+                _offlineSchemaEnsured = true;
                 _offlineSchemaEnsured = true;
             }
             catch (Exception ex)
@@ -2719,6 +2763,16 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             {
                 string json = JsonSerializer.Serialize(payload);
 
+                // capture UI state before leaving the UI thread
+                decimal cash = _isCreditSale ? 0m : _splitCash;
+                decimal bank = _isCreditSale ? 0m : _splitUpi;
+                decimal card = _isCreditSale ? 0m : _splitCard;
+                int? bankId = _selectedBankAccount?.BankAccountID;
+                string bankNo = _selectedBankAccount?.AccountNumber ?? "";
+                int createdBy = CurrentUser.UserInfo?.UserID ?? 0;
+                decimal grand = GrandTotal();
+                int customerId = payload.CustomerId;
+
                 await Task.Run(() =>
                 {
                     EnsureOfflineSyncSchema();
@@ -2726,23 +2780,30 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                     conn.Open();
                     using var cmd = conn.CreateCommand();
                     cmd.CommandText = @"
-                        INSERT INTO PendingSalesOrders (CompanyID, InvoiceNo, PayloadJson, CreatedUtc, Synced)
-                        VALUES (@cid, @inv, @json, @created, 0);";
+                INSERT INTO PendingSalesOrders
+                  (CompanyID, InvoiceNo, PayloadJson, CreatedUtc, Synced, Stage,
+                   CashAmt, BankAmt, CardAmt, BankAccountId, BankAccountNo, CustomerId, GrandTotal, CreatedBy)
+                VALUES
+                  (@cid, @inv, @json, @created, 0, 0,
+                   @cash, @bank, @card, @bankId, @bankNo, @cust, @grand, @by);";
                     cmd.Parameters.AddWithValue("@cid", _companyId);
                     cmd.Parameters.AddWithValue("@inv", invoiceNo);
                     cmd.Parameters.AddWithValue("@json", json);
                     cmd.Parameters.AddWithValue("@created", DateTime.UtcNow.ToString("o"));
+                    cmd.Parameters.AddWithValue("@cash", (double)cash);
+                    cmd.Parameters.AddWithValue("@bank", (double)bank);
+                    cmd.Parameters.AddWithValue("@card", (double)card);
+                    cmd.Parameters.AddWithValue("@bankId", (object)bankId ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@bankNo", bankNo);
+                    cmd.Parameters.AddWithValue("@cust", customerId);
+                    cmd.Parameters.AddWithValue("@grand", (double)grand);
+                    cmd.Parameters.AddWithValue("@by", createdBy);
                     cmd.ExecuteNonQuery();
                 }).ConfigureAwait(false);
 
-                Debug.WriteLine($"QueueOfflineSalesOrderAsync: queued {invoiceNo} for later sync.");
                 return true;
             }
-            catch (Exception ex)
-            {
-                Debug.WriteLine("QueueOfflineSalesOrderAsync: " + ex.Message);
-                return false;
-            }
+            catch (Exception ex) { Debug.WriteLine("QueueOfflineSalesOrderAsync: " + ex.Message); return false; }
         }
         private async Task<bool> QueueOfflineStockUpdateAsync(int itemId, int companyId, decimal saleQty)
         {
@@ -3003,88 +3064,201 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                 _offlineSyncInProgress = false;
             }
         }
-        private async Task SyncOfflineSalesOrdersInnerAsync()
+        private class OfflineSaleRow
         {
-            if (!GetOnline()) return; // don't even try while offline
+            public long PkId; public string InvoiceNo, Json, SoNumber, BankAccountNo;
+            public int Stage, CustomerId, CreatedBy;
+            public int? InvoiceId, PaymentId, BankAccountId;
+            public decimal Cash, Bank, Card, Grand;
+        }
 
-            var pending = new List<(long PkId, string InvoiceNo, string Json)>();
+        private List<OfflineSaleRow> LoadPendingOfflineSales()
+        {
+            var list = new List<OfflineSaleRow>();
+            EnsureOfflineSyncSchema();
+            using var conn = new SQLiteConnection($"Data Source={_dbPath};Version=3;");
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+        SELECT PKId, InvoiceNo, PayloadJson, Stage, SONumber, InvoiceId, PaymentId,
+               CashAmt, BankAmt, CardAmt, BankAccountId, BankAccountNo, CustomerId, GrandTotal, CreatedBy
+        FROM PendingSalesOrders WHERE CompanyID = @cid AND Synced = 0 ORDER BY PKId;";
+            cmd.Parameters.AddWithValue("@cid", _companyId);
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+                list.Add(new OfflineSaleRow
+                {
+                    PkId = r.GetInt64(0),
+                    InvoiceNo = r.GetString(1),
+                    Json = r.GetString(2),
+                    Stage = r.IsDBNull(3) ? 0 : r.GetInt32(3),
+                    SoNumber = r.IsDBNull(4) ? null : r.GetString(4),
+                    InvoiceId = r.IsDBNull(5) ? (int?)null : r.GetInt32(5),
+                    PaymentId = r.IsDBNull(6) ? (int?)null : r.GetInt32(6),
+                    Cash = r.IsDBNull(7) ? 0m : Convert.ToDecimal(r.GetDouble(7)),
+                    Bank = r.IsDBNull(8) ? 0m : Convert.ToDecimal(r.GetDouble(8)),
+                    Card = r.IsDBNull(9) ? 0m : Convert.ToDecimal(r.GetDouble(9)),
+                    BankAccountId = r.IsDBNull(10) ? (int?)null : r.GetInt32(10),
+                    BankAccountNo = r.IsDBNull(11) ? "" : r.GetString(11),
+                    CustomerId = r.IsDBNull(12) ? 0 : r.GetInt32(12),
+                    Grand = r.IsDBNull(13) ? 0m : Convert.ToDecimal(r.GetDouble(13)),
+                    CreatedBy = r.IsDBNull(14) ? 0 : r.GetInt32(14)
+                });
+            return list;
+        }
 
+        private async Task SaveOfflineSaleStageAsync(long pk, int stage, string soNumber, int? invoiceId, int? paymentId)
+        {
             await Task.Run(() =>
             {
-                EnsureOfflineSyncSchema();
                 using var conn = new SQLiteConnection($"Data Source={_dbPath};Version=3;");
                 conn.Open();
                 using var cmd = conn.CreateCommand();
                 cmd.CommandText = @"
-            SELECT PKId, InvoiceNo, PayloadJson
-            FROM PendingSalesOrders
-            WHERE CompanyID = @cid AND Synced = 0
-            ORDER BY PKId;";
-                cmd.Parameters.AddWithValue("@cid", _companyId);
-                using var rdr = cmd.ExecuteReader();
-                while (rdr.Read())
-                    pending.Add((rdr.GetInt64(0), rdr.GetString(1), rdr.GetString(2)));
+            UPDATE PendingSalesOrders
+            SET Stage=@s, SONumber=COALESCE(@so,SONumber), InvoiceId=COALESCE(@inv,InvoiceId),
+                PaymentId=COALESCE(@pay,PaymentId), LastAttemptUtc=@t
+            WHERE PKId=@id;";
+                cmd.Parameters.AddWithValue("@s", stage);
+                cmd.Parameters.AddWithValue("@so", (object)soNumber ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@inv", (object)invoiceId ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@pay", (object)paymentId ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@t", DateTime.UtcNow.ToString("o"));
+                cmd.Parameters.AddWithValue("@id", pk);
+                cmd.ExecuteNonQuery();
             }).ConfigureAwait(false);
+        }
 
+        private async Task SyncOfflineSalesOrdersInnerAsync()
+        {
+            if (!GetOnline()) return;
+
+            var pending = await Task.Run(LoadPendingOfflineSales).ConfigureAwait(true);
             if (pending.Count == 0) return;
 
-            ShowStatus($"🔄 Syncing {pending.Count} offline sale(s)…", true);
-
             int synced = 0, failed = 0;
-
             foreach (var row in pending)
             {
                 try
                 {
-                    var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                    var payload = JsonSerializer.Deserialize<CreateSalesOrderPayload>(row.Json, opts);
-                    if (payload == null) { failed++; continue; }
-
-                    var result = await SalesOrderApi.CreateSalesOrderAsync(payload).ConfigureAwait(true);
-
-                    // ============================================================
-                    // 2. SYNC OFFLINE SALES ORDERS
-                    //    DO NOT reduce stock here if the online sale already
-                    //    reduced it. Only sync the Sales Order.
-                    // ============================================================
-
-                    if (result.Success)
-                    {
-                        // Stock is reduced server-side by SalesOrderBL.CreateAsync when the SO
-                        // is created (called via SalesOrderApi.CreateSalesOrderAsync above).
-                        // Do NOT call ProcessSaleStockAsync here — that was double-reducing.
-
-                        if (!string.IsNullOrWhiteSpace(result.SoNumber) &&
-                            string.Equals(payload.Status, "Confirm", StringComparison.OrdinalIgnoreCase))
-                        {
-                            await QueueOfflineSOInvoiceAsync(_companyId, result.SoNumber).ConfigureAwait(true);
-                        }
-
-                        await MarkOfflineOrderSyncedAsync(row.PkId).ConfigureAwait(true);
-                        synced++;
-                    }
-                    else
-                    {
-                        await MarkOfflineOrderAttemptFailedAsync(
-                            row.PkId,
-                            "API returned failure"
-                        ).ConfigureAwait(true);
-
-                        failed++;
-                    }
+                    if (await SyncOneOfflineSaleAsync(row).ConfigureAwait(true)) synced++;
+                    else { failed++; if (!GetOnline()) break; }
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"SyncOfflineSalesOrdersInnerAsync: {row.InvoiceNo} failed — {ex.Message}");
                     await MarkOfflineOrderAttemptFailedAsync(row.PkId, ex.Message).ConfigureAwait(true);
                     failed++;
-                    // If this failure is because we just went offline again, stop the batch.
                     if (!GetOnline()) break;
                 }
             }
 
-            if (synced > 0 || failed > 0)
-                ShowStatus($"✓ Offline sync: {synced} sale(s) pushed" + (failed > 0 ? $", {failed} still pending." : "."), synced > 0);
+            Debug.WriteLine($"SyncOfflineSales: {synced} synced, {failed} pending.");
+            if (synced > 0)
+            {
+                ShowStatus($"✓ Offline sync: {synced} sale(s) pushed to server.", true);
+                _ = LoadStockCacheAsync();
+                DashboardEventBus.Notify();
+            }
+        }
+
+        private async Task<bool> SyncOneOfflineSaleAsync(OfflineSaleRow row)
+        {
+            string soNumber = row.SoNumber;
+
+            // ── Stage 0 → create Sales Order ──
+            if (row.Stage < 1)
+            {
+                var payload = JsonSerializer.Deserialize<CreateSalesOrderPayload>(
+                    row.Json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (payload == null) { await MarkOfflineOrderAttemptFailedAsync(row.PkId, "Bad payload"); return false; }
+
+                var r = await SalesOrderApi.CreateSalesOrderAsync(payload).ConfigureAwait(true);
+                if (!r.Success) { await MarkOfflineOrderAttemptFailedAsync(row.PkId, "Create SO failed"); return false; }
+
+                soNumber = r.SoNumber;
+                row.Stage = 1;
+                await SaveOfflineSaleStageAsync(row.PkId, 1, soNumber, null, null).ConfigureAwait(true);
+            }
+
+            if (string.IsNullOrWhiteSpace(soNumber))
+            {
+                // SO exists on server but number couldn't be read — can't invoice automatically.
+                await MarkOfflineOrderAttemptFailedAsync(row.PkId, "SO created but SO number unknown — invoice manually");
+                await MarkOfflineOrderSyncedAsync(row.PkId);
+                return true;
+            }
+
+            // ── Stage 1 → create + confirm SO Invoice ──
+            if (row.Stage < 2)
+            {
+                int? invId = row.InvoiceId;
+                if (invId.HasValue && invId.Value > 0)
+                {
+                    if (!await SalesOrderApi.ConfirmSOInvoiceAsync(invId.Value).ConfigureAwait(true))
+                    { await MarkOfflineOrderAttemptFailedAsync(row.PkId, "Invoice confirm failed"); return false; }
+                }
+                else
+                {
+                    var so = await SalesOrderApi.GetSalesOrderBySoNumberAsync(soNumber).ConfigureAwait(true);
+                    if (so == null) { await MarkOfflineOrderAttemptFailedAsync(row.PkId, "SO not found yet"); return false; }
+
+                    var inv = await CreateAndConfirmSOInvoiceAsync(so).ConfigureAwait(true);
+                    if (inv.InvoiceId.HasValue && inv.InvoiceId.Value > 0)
+                        await SaveOfflineSaleStageAsync(row.PkId, 1, soNumber, inv.InvoiceId, null).ConfigureAwait(true);
+                    if (!inv.Success) { await MarkOfflineOrderAttemptFailedAsync(row.PkId, "Invoice create/confirm failed"); return false; }
+                    invId = inv.InvoiceId;
+                }
+                row.InvoiceId = invId;
+                row.Stage = 2;
+                await SaveOfflineSaleStageAsync(row.PkId, 2, soNumber, invId, null).ConfigureAwait(true);
+            }
+
+            // ── Stage 2 → customer payment (cash + bank; credit sales have none) ──
+            decimal settle = Math.Min(row.Cash + row.Bank, row.Grand);
+            if (settle > 0.001m)
+            {
+                int? paymentId = row.PaymentId;
+                int? bankId = row.Bank > 0 ? row.BankAccountId : null;
+
+                if (!paymentId.HasValue || paymentId.Value <= 0)
+                {
+                    var save = new SalesOrderApi.SaveCustomerPaymentPayload
+                    {
+                        CompanyId = _companyId,
+                        CustomerId = row.CustomerId,
+                        PaymentDate = DateTime.Now,
+                        PaymentMethod = row.Bank > 0 ? "Bank Transfer" : "Cash",
+                        BankAccountId = bankId ?? 0,
+                        ReferenceNo = row.Bank > 0 ? row.BankAccountNo : "",
+                        CurrencyCode = _currencySymbol,
+                        ExchangeRate = 1m,
+                        Description = "POS Sale",
+                        Comments = $"Auto-settled from offline POS sale {row.InvoiceNo} ({soNumber})",
+                        PaymentStatus = "Draft",
+                        CreatedBy = row.CreatedBy,
+                        Settlements = new List<SalesOrderApi.CustomerPaymentSettlementDto>
+                {
+                    new SalesOrderApi.CustomerPaymentSettlementDto
+                    {
+                        InvoiceID = row.InvoiceId ?? 0, InvoiceNo = soNumber,
+                        InvoiceAmount = row.Grand, AmountToSettle = settle
+                    }
+                }
+                    };
+                    var res = await SalesOrderApi.SaveCustomerPaymentAsync(save).ConfigureAwait(true);
+                    if (!res.Success || !res.PaymentId.HasValue)
+                    { await MarkOfflineOrderAttemptFailedAsync(row.PkId, "Payment save failed"); return false; }
+
+                    paymentId = res.PaymentId;
+                    await SaveOfflineSaleStageAsync(row.PkId, 2, soNumber, row.InvoiceId, paymentId).ConfigureAwait(true);
+                }
+
+                if (!await SalesOrderApi.PostCustomerPaymentAsync(paymentId.Value, row.CreatedBy, bankId).ConfigureAwait(true))
+                { await MarkOfflineOrderAttemptFailedAsync(row.PkId, "Payment post failed"); return false; }
+            }
+
+            await MarkOfflineOrderSyncedAsync(row.PkId).ConfigureAwait(true);
+            return true;
         }
         private async Task MarkOfflineOrderSyncedAsync(long pkId)
         {
@@ -7956,33 +8130,35 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
         {
             try
             {
-                if (customerId <= 0)
+                bool online = await Task.Run(() => GetOnline()).ConfigureAwait(true);
+
+                if (online && customerId <= 0)
                     customerId = await SalesOrderApi.GetCustomerIdByNameAsync(customerName).ConfigureAwait(true);
 
-                var idByName = await SalesOrderApi.GetItemNameMapAsync().ConfigureAwait(true);
-
-                var nameToId = idByName
-                    .GroupBy(kv => kv.Value, StringComparer.OrdinalIgnoreCase)
-                    .ToDictionary(g => g.Key, g => g.First().Key, StringComparer.OrdinalIgnoreCase);
+                var nameToId = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                if (online)
+                {
+                    try
+                    {
+                        var idByName = await SalesOrderApi.GetItemNameMapAsync().ConfigureAwait(true);
+                        nameToId = idByName.GroupBy(kv => kv.Value, StringComparer.OrdinalIgnoreCase)
+                                           .ToDictionary(g => g.Key, g => g.First().Key, StringComparer.OrdinalIgnoreCase);
+                    }
+                    catch { /* fall back to cached ItemId on the cart line */ }
+                }
 
                 var lines = new List<CreateSOLinePayload>();
                 decimal totalLineTax = 0m;
-
-                // ── NEW: collect problems instead of silently sending bad lines ──
                 var invalidItems = new List<string>();
 
                 foreach (var item in _cart)
                 {
-                    // ── NEW: item name itself missing/blank — can't even attempt lookup ──
-                    if (string.IsNullOrWhiteSpace(item.Name))
-                    {
-                        invalidItems.Add($"(blank item name, barcode '{item.Barcode}')");
-                        continue;
-                    }
+                    if (string.IsNullOrWhiteSpace(item.Name)) { invalidItems.Add("(blank item name)"); continue; }
 
-                    int itemId;
-                    if (!nameToId.TryGetValue(item.Name, out itemId))
-                        int.TryParse(item.Barcode, out itemId);
+                    // Prefer the ID already resolved from the (local-cached) item map; barcode is NOT an item id.
+                    int itemId = item.ItemId;
+                    if (itemId <= 0) nameToId.TryGetValue(item.Name, out itemId);
+                    if (itemId <= 0) { invalidItems.Add(item.Name); continue; }
 
                     // ── NEW: neither the name map nor the barcode fallback resolved an ID ──
                     if (itemId <= 0)
@@ -8063,8 +8239,22 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
                     }).ToList()
                 };
                 _lastOrderQueuedOffline = false;
-                var result = await SalesOrderApi.CreateSalesOrderAsync(payload).ConfigureAwait(true);
 
+                if (!online)
+                {
+                    if (await QueueOfflineSalesOrderAsync(invoiceNo, payload).ConfigureAwait(true))
+                    {
+                        _lastOrderQueuedOffline = true;
+                        ShowStatus($"📴 Offline — sale {invoiceNo} saved locally, will sync automatically.", true);
+                        return (true, null, invoiceNo);
+                    }
+                    return (false, null, null);
+                }
+
+                var result = await SalesOrderApi.CreateSalesOrderAsync(payload).ConfigureAwait(true);
+                // ════════ NEW BLOCK ENDS HERE ════════
+
+                // ── this existing block stays as-is, directly below ──
                 if (!result.Success)
                 {
                     Debug.WriteLine($"CreateSalesOrderFromCartAsync: API call failed for {invoiceNo} — queuing offline.");
@@ -8232,8 +8422,9 @@ CREATE INDEX IF NOT EXISTS IX_PendingCustomerPayments_Unsynced
             decimal localCash = 0m, localUpi = 0m, localCard = 0m;
             string localActive = "cash";
             SalesOrderApi.BankAccountDto localBankAccount = null;
-            if (_bankAccounts == null || _bankAccounts.Count == 0)
+            if ((_bankAccounts == null || _bankAccounts.Count == 0) && GetOnline())
                 _bankAccounts = await SalesOrderApi.GetAllBanksAsync(_companyId).ConfigureAwait(true);
+            _bankAccounts ??= new();
 
             const int W = 420;
             const int MARGIN = 24;

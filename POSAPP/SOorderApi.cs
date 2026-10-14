@@ -227,7 +227,7 @@ namespace POSAPP.Payment
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine("GetCustomersAsync failed: " + ex.Message);
-                _customerCache = new List<CustomerApiRow>();
+                return new List<CustomerApiRow>();
             }
             return _customerCache;
         }
@@ -379,8 +379,8 @@ namespace POSAPP.Payment
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine("GetItemsAsync failed: " + ex.Message);
-                _itemCache = new List<ItemApiRow>();
+                Debug.WriteLine("GetItemsAsync failed: " + ex.Message);
+                return new List<ItemApiRow>();      // ← don't assign _itemCache here
             }
             return _itemCache;
         }

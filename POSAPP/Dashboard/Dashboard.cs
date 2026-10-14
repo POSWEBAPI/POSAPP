@@ -1006,25 +1006,175 @@ namespace POSAPP
             if (lblDateText != null) lblDateText.Text = DateTime.Now.ToString("ddd, dd MMM yyyy  HH:mm");
             PositionTopRightControls();
         }
+        private static void UpsertRow(SQLiteConnection conn, SQLiteTransaction tx,
+    string table, string keyColumn, Dictionary<string, object> values)
+        {
+            // Read the real table schema
+            var cols = new List<(string Name, string Type, bool NotNull, bool HasDefault)>();
+            using (var pragma = new SQLiteCommand($"PRAGMA table_info({table});", conn, tx))
+            using (var r = pragma.ExecuteReader())
+                while (r.Read())
+                    cols.Add((r["name"].ToString(), (r["type"].ToString() ?? "").ToUpperInvariant(),
+                              Convert.ToInt32(r["notnull"]) == 1, !r.IsDBNull(r.GetOrdinal("dflt_value"))));
+
+            var existing = new HashSet<string>(cols.Select(c => c.Name), StringComparer.OrdinalIgnoreCase);
+
+            // Keep only columns that exist locally
+            var data = values.Where(kv => existing.Contains(kv.Key))
+                             .ToDictionary(kv => kv.Key, kv => kv.Value ?? DBNull.Value,
+                                           StringComparer.OrdinalIgnoreCase);
+
+            // Fill remaining NOT NULL columns that have no default
+            foreach (var c in cols)
+            {
+                if (data.ContainsKey(c.Name) || !c.NotNull || c.HasDefault) continue;
+                if (c.Type.Contains("INT") || c.Type.Contains("NUM") || c.Type.Contains("REAL") ||
+                    c.Type.Contains("DEC") || c.Type.Contains("BOOL"))
+                    data[c.Name] = 0;
+                else if (c.Type.Contains("DATE") || c.Type.Contains("TIME"))
+                    data[c.Name] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+                else
+                    data[c.Name] = "";
+            }
+
+            // UPDATE (non-key columns)
+            var setCols = data.Keys.Where(k => !k.Equals(keyColumn, StringComparison.OrdinalIgnoreCase)).ToList();
+            int updated = 0;
+            if (setCols.Count > 0)
+            {
+                string setSql = string.Join(", ", setCols.Select(k => $"{k}=@{k}"));
+                using var upd = new SQLiteCommand($"UPDATE {table} SET {setSql} WHERE {keyColumn}=@{keyColumn};", conn, tx);
+                foreach (var k in setCols) upd.Parameters.AddWithValue("@" + k, data[k]);
+                upd.Parameters.AddWithValue("@" + keyColumn, data[keyColumn]);
+                updated = upd.ExecuteNonQuery();
+            }
+
+            // INSERT if nothing was updated
+            if (updated == 0)
+            {
+                string colList = string.Join(", ", data.Keys);
+                string parList = string.Join(", ", data.Keys.Select(k => "@" + k));
+                using var ins = new SQLiteCommand($"INSERT INTO {table} ({colList}) VALUES ({parList});", conn, tx);
+                foreach (var kv in data) ins.Parameters.AddWithValue("@" + kv.Key, kv.Value);
+                ins.ExecuteNonQuery();
+            }
+        }
 
         // ══════════════════════════════════════════════════════════════════
         // API — COMPANY
         // ══════════════════════════════════════════════════════════════════
         private async Task LoadCompanyDataAsync()
         {
-            List<Company> companies = _onlineCache == true
+            bool fromApi = _onlineCache == true;
+
+            List<Company> companies = fromApi
                 ? await TryFetchCompaniesFromApiAsync()
                 : await LoadCompaniesFromSQLiteAsync();
 
+            // API failed while "online"? fall back to local so the screen still works
+            if (fromApi && (companies == null || companies.Count == 0))
+            {
+                fromApi = false;
+                companies = await LoadCompaniesFromSQLiteAsync();
+            }
+
             if (companies?.Count > 0)
             {
+                if (fromApi)
+                {
+                    var snapshot = companies.ToList();
+                    await Task.Run(() => SyncCompaniesToLocal(snapshot));   // persist for offline use
+                }
+
                 BindCompaniesToCombo(companies);
 
-                // SelectedIndexChanged may not fire if the first bound item is
-                // already the selected one, so make sure store data still loads.
                 if (_selectedCompanyId > 0)
                     await LoadStoreDataAsync(_selectedCompanyId);
             }
+        }
+        // ══════════════════════════════════════════════════════════════════
+        // LOCAL SYNC — keep SQLite in step with what the API returned
+        // ══════════════════════════════════════════════════════════════════
+        private static void EnsureCompanyStoreTables(SQLiteConnection conn)
+        {
+            // No-ops if your tables already exist with a fuller schema
+            using (var cmd = new SQLiteCommand(@"
+        CREATE TABLE IF NOT EXISTS CompanyMaster (
+            CompanyID INTEGER PRIMARY KEY,
+            Name      TEXT NOT NULL
+        );", conn)) cmd.ExecuteNonQuery();
+
+            using (var cmd = new SQLiteCommand(@"
+        CREATE TABLE IF NOT EXISTS Store (
+            StoreID   INTEGER PRIMARY KEY,
+            CompanyID INTEGER NOT NULL,
+            StoreName TEXT NOT NULL
+        );", conn)) cmd.ExecuteNonQuery();
+        }
+
+        private static void SyncCompaniesToLocal(List<Company> companies)
+        {
+            if (companies == null || companies.Count == 0) return;
+            try
+            {
+                using var conn = new SQLiteConnection($"Data Source={DbPath()};Version=3;");
+                conn.Open();
+                EnsureCompanyStoreTables(conn);
+                using var tx = conn.BeginTransaction();
+
+                foreach (var c in companies)
+                {
+                    if (c.CompanyId <= 0) continue;
+                    UpsertRow(conn, tx, "CompanyMaster", "CompanyID", new Dictionary<string, object>
+                    {
+                        ["CompanyID"] = c.CompanyId,
+                        ["Name"] = (c.CompanyName ?? "").Trim(),
+                        ["CompanyCode"] = string.IsNullOrWhiteSpace(c.CompanyCode) ? c.CompanyId.ToString() : c.CompanyCode,
+                        ["Address"] = c.Address,
+                        ["City"] = c.City,
+                        ["Country"] = c.Country,
+                        ["Mobile"] = c.Mobile,
+                        ["Email"] = c.Email,
+                        ["Website"] = c.Website,
+                        ["BaseCurrency"] = c.BaseCurrency,
+                        ["DefaultCostMethod"] = string.IsNullOrWhiteSpace(c.DefaultCostMethod) ? "WAVG" : c.DefaultCostMethod,
+                        ["ContactPerson"] = c.ContactPerson,
+                        ["Status"] = c.Status,
+                        ["VAT"] = c.VAT,
+                        ["CreatedBy"] = CurrentUser.UserInfo?.UserID ?? 0,
+                        ["CreatedDate"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
+                    });
+                }
+                tx.Commit();
+                Debug.WriteLine($"SyncCompaniesToLocal: {companies.Count} company(ies) synced.");
+            }
+            catch (Exception ex) { Debug.WriteLine("SyncCompaniesToLocal FAILED: " + ex); } // full exception, not just Message
+        }
+
+        private static void SyncStoresToLocal(List<Store> stores, int companyId)
+        {
+            if (stores == null || stores.Count == 0) return;
+            try
+            {
+                using var conn = new SQLiteConnection($"Data Source={DbPath()};Version=3;");
+                conn.Open();
+                EnsureCompanyStoreTables(conn);
+                using var tx = conn.BeginTransaction();
+
+                foreach (var s in stores)
+                {
+                    if (s.StoreID <= 0) continue;
+                    UpsertRow(conn, tx, "Store", "StoreID", new Dictionary<string, object>
+                    {
+                        ["StoreID"] = s.StoreID,
+                        ["CompanyID"] = companyId,
+                        ["StoreName"] = (s.StoreName ?? "").Trim()
+                    });
+                }
+                tx.Commit();
+                Debug.WriteLine($"SyncStoresToLocal: {stores.Count} store(s) synced.");
+            }
+            catch (Exception ex) { Debug.WriteLine("SyncStoresToLocal FAILED: " + ex); }
         }
 
         private async Task<List<Company>> LoadCompaniesFromSQLiteAsync()
@@ -1093,20 +1243,36 @@ namespace POSAPP
             }
             catch (Exception ex) { Debug.WriteLine("API companies failed: " + ex.Message); return null; }
         }
- 
 
-       
 
-        // ══════════════════════════════════════════════════════════════════
-        // API — STORE
-        // ══════════════════════════════════════════════════════════════════
+
+
         private async Task LoadStoreDataAsync(int companyId)
         {
             if (companyId <= 0) return;
-            List<Store> stores = _onlineCache == true
+
+            bool fromApi = _onlineCache == true;
+
+            List<Store> stores = fromApi
                 ? await TryFetchStoresFromApiAsync(companyId)
                 : await LoadStoresFromSQLiteAsync(companyId);
-            if (stores?.Count > 0) BindStoresToCombo(stores);
+
+            if (fromApi && (stores == null || stores.Count == 0))
+            {
+                fromApi = false;
+                stores = await LoadStoresFromSQLiteAsync(companyId);
+            }
+
+            if (stores?.Count > 0)
+            {
+                if (fromApi)
+                {
+                    foreach (var s in stores) s.CompanyID = companyId;      // API row may not carry it
+                    var snapshot = stores.ToList();
+                    await Task.Run(() => SyncStoresToLocal(snapshot, companyId));
+                }
+                BindStoresToCombo(stores);
+            }
         }
 
         private async Task<List<Store>> TryFetchStoresFromApiAsync(int StoreID)
@@ -2224,6 +2390,19 @@ namespace POSAPP
             public int CompanyId { get; set; }
             [JsonPropertyName("name")]
             public string CompanyName { get; set; }
+
+            public string CompanyCode { get; set; }
+            public string Address { get; set; }
+            public string City { get; set; }
+            public string Country { get; set; }
+            public string Mobile { get; set; }
+            public string Email { get; set; }
+            public string Website { get; set; }
+            public int BaseCurrency { get; set; }
+            public string DefaultCostMethod { get; set; }
+            public string ContactPerson { get; set; }
+            public string Status { get; set; }
+            public string VAT { get; set; }
         }
 
         public class Store

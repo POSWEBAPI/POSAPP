@@ -722,9 +722,9 @@ namespace POSAPP
                 return p;
             }
 
-            panelSplitCash = MakeSplitPanel("💵", " ", out lblCashTitle, out txtSplitCash, 30);
-            panelSplitUpi = MakeSplitPanel("📱", "", out lblUpiTitle, out txtSplitUpi, 82);
-            panelSplitCard = MakeSplitPanel("💳", " ", out lblCardTitle, out txtSplitCard, 134);
+            //panelSplitCash = MakeSplitPanel("💵", " ", out lblCashTitle, out txtSplitCash, 30);
+           // panelSplitUpi = MakeSplitPanel("📱", "", out lblUpiTitle, out txtSplitUpi, 82);
+            //panelSplitCard = "";
 
             panelSplitCash.Click += new EventHandler(panelSplitCash_Click);
             panelSplitUpi.Click += new EventHandler(panelSplitUpi_Click);

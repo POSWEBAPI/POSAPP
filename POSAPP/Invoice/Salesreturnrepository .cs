@@ -9,6 +9,9 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
+using static POSAPP.login;
+using System.Net.Http;
+using System.Text;
 
 namespace POSAPP.Invoice
 {
@@ -156,7 +159,7 @@ namespace POSAPP.Invoice
     {
         private static readonly string DbPath =
             Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ShriPOS.db");
-
+        private static readonly HttpClient _http = new HttpClient();
         private static int _returnSeq = 0;
         private static readonly object _seqLock = new object();
 
@@ -299,12 +302,38 @@ namespace POSAPP.Invoice
             list.Sort((a, b) => b.InvoiceDate.CompareTo(a.InvoiceDate));
             return list;   // exceptions bubble up so the form can show them
         }
+        private static void ApplyAuthHeader()
+        {
+            if (!string.IsNullOrWhiteSpace(CurrentUser.Token))
+            {
+                _http.DefaultRequestHeaders.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", CurrentUser.Token);
+            }
+            else
+            {
+                _http.DefaultRequestHeaders.Authorization = null;
+            }
+        }
 
+        // Same as processSOReturn in soInvoiceApi.js -> POST /api/SOInvoice/process-return
         // Same as processSOReturn in soInvoiceApi.js -> POST /api/SOInvoice/process-return
         public static async Task ProcessSOReturnAsync(List<ProcessReturnLineDto> lines)
         {
             if (lines == null || lines.Count == 0) return;
-            await ApiClient.PostJsonAsync("/api/SOInvoice/process-return", lines);
+
+            ApplyAuthHeader();   // sets the token on _http, which is the client used below
+
+            string json = JsonSerializer.Serialize(lines);
+            using var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+            string url = AppConfig.BaseUrl.TrimEnd('/') + "/api/SOInvoice/process-return";
+            var resp = await _http.PostAsync(url, content);
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                string body = await resp.Content.ReadAsStringAsync();
+                throw new Exception($"{(int)resp.StatusCode}: {body}");
+            }
         }
 
         // ══════════════════════════════════════════════════════════════════════
