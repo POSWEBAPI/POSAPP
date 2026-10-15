@@ -6,8 +6,8 @@ using System.Drawing.Drawing2D;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading.Tasks;
 using System.Windows.Forms;
-
 
 namespace POSAPP
 {
@@ -21,12 +21,7 @@ namespace POSAPP
         private bool _updateInProgress;
         private const int PIN_LENGTH = 5;
 
-        // ── JSON options ─────────────────────────────────────────────────────
-        // FIX: System.Text.Json is case-sensitive by default. The API returns
-        // camelCase keys ("companyId", "storeId", "roleId", ...) while our C#
-        // properties use PascalCase ("CompanyID", "StoreID", "RoleID"). Without
-        // this option, those fields silently fail to bind and stay at 0/null —
-        // which is why CompanyID was coming back empty after a successful login.
+        // ── JSON options (API returns camelCase, our DTOs are PascalCase) ────
         private static readonly JsonSerializerOptions JsonOpts = new JsonSerializerOptions
         {
             PropertyNameCaseInsensitive = true
@@ -39,13 +34,12 @@ namespace POSAPP
         // ── PIN state ─────────────────────────────────────────────────────────
         private string _pin = "";
 
-        // ── Status toast ──────────────────────────────────────────────────────
-        private Panel _statusCard;
-        private Label _statusIcon;
-        private Label _statusText;
-        private System.Windows.Forms.Timer _dotTimer;
-        private int _dotCount = 0;
-        private string _baseMessage = "";
+        // ── Dot animation state (used by PinDot_Paint in the Designer) ───────
+        private Color? _dotTint;            // shake colour (red / amber)
+        private int _loadIdx = -1;          // chasing dot while logging in
+        private System.Windows.Forms.Timer _loadTimer;
+        private int? _dotsBaseX;
+        private bool _shaking, _busy;
 
         // ═════════════════════════════════════════════════════════════════════
         public login()
@@ -61,17 +55,13 @@ namespace POSAPP
         // ═════════════════════════════════════════════════════════════════════
         // LOAD
         // ═════════════════════════════════════════════════════════════════════
-        private async void Form1_Load(object sender, EventArgs e)
+        private void Form1_Load(object sender, EventArgs e)
         {
             LoadLogo();
-            BuildStatusCard();
             lblShiftInfo.Text = $"Shift: Morning | Terminal ID: #01  ";
             btnMaximize_Click(null, null);
-
-          
         }
 
-     
         private void LoadLogo()
         {
             string[] names = { "logo.png", "shripos.png", "ShriPOS.png", "logo.jpg", "logo.jpeg" };
@@ -91,8 +81,6 @@ namespace POSAPP
                 }
             }
 
-            // No logo file found — designer already set Text="EUROTEX",
-            // full-width Size, and centered Location. Just show it.
             picLogo.Visible = false;
             lblLogoFallback.Visible = true;
         }
@@ -123,7 +111,6 @@ namespace POSAPP
             }
 
             UpdatePinDots();
-            HideStatus();
         }
 
         private void UpdatePinDots()
@@ -133,125 +120,18 @@ namespace POSAPP
                 pinDots[i].Tag = i < _pin.Length;
                 pinDots[i].Invalidate();
             }
-        }
 
-        // ═════════════════════════════════════════════════════════════════════
-        // STATUS TOAST
-        // ═════════════════════════════════════════════════════════════════════
-        private void BuildStatusCard()
-        {
-            _statusCard = new Panel
-            {
-                Size = new Size(320, 44),
-                BackColor = Color.FromArgb(239, 246, 255),
-                Visible = false,
-                Cursor = Cursors.Default
-            };
-            _statusCard.Region = MakeRoundedRegion(_statusCard.Size, 10);
-
-            _statusIcon = new Label
-            {
-                Font = new Font("Segoe UI", 13F),
-                BackColor = Color.Transparent,
-                AutoSize = false,
-                Size = new Size(38, 44),
-                Location = new Point(8, 0),
-                TextAlign = ContentAlignment.MiddleCenter
-            };
-
-            _statusText = new Label
-            {
-                Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
-                BackColor = Color.Transparent,
-                ForeColor = C_Info,
-                AutoSize = false,
-                Size = new Size(270, 44),
-                Location = new Point(48, 0),
-                TextAlign = ContentAlignment.MiddleLeft
-            };
-
-            _statusCard.Controls.Add(_statusIcon);
-            _statusCard.Controls.Add(_statusText);
-            this.Controls.Add(_statusCard);
-            _statusCard.BringToFront();
-
-            _dotTimer = new System.Windows.Forms.Timer { Interval = 400 };
-            _dotTimer.Tick += (s, _) =>
-            {
-                _dotCount = (_dotCount + 1) % 4;
-                if (_statusText != null && !_statusText.IsDisposed)
-                    _statusText.Text = _baseMessage + new string('.', _dotCount);
-            };
-        }
-
-        private enum StatusType { Loading, Success, Error, Warning }
-
-        private void ShowStatus(string message, StatusType type)
-        {
-            void Apply()
-            {
-                if (_statusCard == null || _statusCard.IsDisposed) return;
-                _statusCard.Location = new Point(
-     this.ClientSize.Width - _statusCard.Width - 14, 50);
-
-                _dotTimer.Stop(); _dotCount = 0; _baseMessage = message;
-
-                switch (type)
-                {
-                    case StatusType.Loading:
-                        _statusCard.BackColor = Color.FromArgb(239, 246, 255);
-                        _statusText.ForeColor = C_Info;
-                        _statusIcon.Text = "⏳";
-                        _statusText.Text = message;
-                        _dotTimer.Start();
-                        break;
-                    case StatusType.Success:
-                        _statusCard.BackColor = Color.FromArgb(240, 253, 244);
-                        _statusText.ForeColor = C_Success;
-                        _statusIcon.Text = "✅";
-                        _statusText.Text = message;
-                        break;
-                    case StatusType.Error:
-                        _statusCard.BackColor = Color.FromArgb(254, 242, 242);
-                        _statusText.ForeColor = C_Error;
-                        _statusIcon.Text = "❌";
-                        _statusText.Text = message;
-                        break;
-                    case StatusType.Warning:
-                        _statusCard.BackColor = Color.FromArgb(255, 251, 235);
-                        _statusText.ForeColor = C_Warning;
-                        _statusIcon.Text = "⚠️";
-                        _statusText.Text = message;
-                        break;
-                }
-
-                _statusCard.Region = MakeRoundedRegion(_statusCard.Size, 10);
-                _statusCard.Visible = true;
-                _statusCard.BringToFront();
-                _statusCard.Invalidate();
-            }
-            if (InvokeRequired) Invoke((Action)Apply); else Apply();
-        }
-
-        private void HideStatus()
-        {
-            _dotTimer?.Stop();
-            if (_statusCard != null && !_statusCard.IsDisposed)
-            {
-                if (InvokeRequired) Invoke((Action)(() => _statusCard.Visible = false));
-                else _statusCard.Visible = false;
-            }
-        }
+            if (_pin.Length > 0) HidePinError();
+        } 
 
         private void SetLoginBusy(bool busy)
         {
             void Apply()
             {
+                _busy = busy;
                 btnUnlock.Enabled = !busy;
                 btnUnlock.Text = busy ? "PLEASE WAIT…" : "UNLOCK TILL  →";
-                btnUnlock.BackColor = busy
-                    ? Color.FromArgb(148, 163, 184)
-                    : Color.FromArgb(30, 27, 75);
+                btnUnlock.BackColor = busy ? Color.FromArgb(148, 163, 184) : Color.FromArgb(30, 27, 75);
                 foreach (var k in keypadButtons)
                     if (k != null) k.Enabled = !busy;
             }
@@ -263,85 +143,65 @@ namespace POSAPP
         // ═════════════════════════════════════════════════════════════════════
         private async void btnUnlock_Click(object sender, EventArgs e)
         {
-            if (_updateInProgress) return;
-            if (string.IsNullOrWhiteSpace(_pin))
+            if (_updateInProgress || _busy) return;
+
+            if (_pin.Length < PIN_LENGTH)           // empty or incomplete
             {
-                ShowStatus("Enter PIN.", StatusType.Warning);
-                return;
-            }
-            if (_pin.Length < PIN_LENGTH)
-            {
-                ShowStatus("Enter all 4 digits.", StatusType.Warning);
+                await ShakeDotsAsync(C_Warning);
+                await ShowPinErrorAsync($"Enter all {PIN_LENGTH} digits", C_Warning);
                 return;
             }
 
+            HidePinError();
             SetLoginBusy(true);
 
             bool online = await Task.Run(() => IsServerReachable()).ConfigureAwait(true);
-
             if (!online)
             {
-                ShowStatus("Offline — trying local login...", StatusType.Warning);
-                var localUser = LocalAuthService.ValidateUserByPassword(_pin);
-                if (localUser != null)
-                {
-                    ShowStatus("Offline login successful!", StatusType.Success);
-                    await Task.Delay(400);
-                    ApplyLoginResult(localUser, token: null);
-                }
-                else
-                {
-                    ShowStatus("Login failed — incorrect PIN.", StatusType.Error);
-                    ResetPin();
-                    SetLoginBusy(false);
-                }
+                await TryOfflineLoginAsync();
                 return;
             }
 
-            ShowStatus("Logging in", StatusType.Loading);
+            StartLoadingDots();
             try
             {
                 var api = new ApiService();
                 string json = await api.LoginAsync(_pin);
-
-                // FIX: pass JsonOpts so camelCase JSON ("companyId", "storeId",
-                // "roleId") correctly binds to the PascalCase UserInfo properties.
                 var result = JsonSerializer.Deserialize<LoginResponse>(json, JsonOpts);
+                StopLoadingDots();
 
                 if (result != null && result.IsSuccess)
                 {
-                    ShowStatus("Logged in successfully!", StatusType.Success);
-
                     try { await Task.Run(() => LocalAuthService.SaveUser(result.User, _pin)); }
                     catch (Exception ex) { Debug.WriteLine("SaveUser (offline cache) failed: " + ex.Message); }
 
-                    await Task.Delay(400);
                     ApplyLoginResult(result.User, result.Token);
                 }
                 else
                 {
-                    ShowStatus(result?.Message ?? "Invalid PIN.", StatusType.Error);
-                    ResetPin();
-                    SetLoginBusy(false);
+                    await FailLoginAsync();
                 }
             }
             catch
             {
-                ShowStatus("Offline — trying local login...", StatusType.Warning);
-                var local = LocalAuthService.ValidateUserByPassword(_pin);
-                if (local != null)
-                {
-                    ShowStatus("Offline login successful!", StatusType.Success);
-                    await Task.Delay(400);
-                    ApplyLoginResult(local, token: null);
-                }
-                else
-                {
-                    ShowStatus("Login failed — incorrect PIN.", StatusType.Error);
-                    ResetPin();
-                    SetLoginBusy(false);
-                }
+                StopLoadingDots();
+                await TryOfflineLoginAsync();
             }
+        }
+
+        private async Task TryOfflineLoginAsync()
+        {
+            var local = LocalAuthService.ValidateUserByPassword(_pin);
+            if (local != null) ApplyLoginResult(local, token: null);
+            else await FailLoginAsync();
+        }
+
+        private async Task FailLoginAsync()
+        {
+            await ShakeDotsAsync(C_Error);
+            ResetPin();
+            await ShowPinErrorAsync("Incorrect PIN", C_Error);
+            SetLoginBusy(false);
         }
 
         private void ResetPin()
@@ -376,22 +236,6 @@ namespace POSAPP
 
         private static string GetApiBaseUrl() => AppConfig.BaseUrl;
 
-        //private static string GetApiBaseUrl()
-        //{
-        //    try
-        //    {
-        //        string cfg = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.txt");
-        //        if (File.Exists(cfg))
-        //        {
-        //            string url = File.ReadAllText(cfg).Trim();
-        //            if (!string.IsNullOrEmpty(url)) return url;
-        //        }
-        //    }
-        //    catch { }
-        //    return "https://purplemoonapi.mythitsolutions.co.in";
-        //    // return "https://localhost:7022";
-        //}
-
         private async void ApplyLoginResult(UserInfo user, string token)
         {
             CurrentUser.Token = token;
@@ -400,22 +244,98 @@ namespace POSAPP
             CurrentUser.StoreID = user.StoreID;
             CurrentUser.RoleID = user.RoleID;
 
-            // NEW — token == null means we logged in offline, so go straight
-            // to the SQLite mirror instead of attempting an API call.
-            await POSAPP.Security.RightsManager.LoadAsync(
-                user.RoleID,
-                isOnline: token != null);
+            // Rights load in the background while the animation plays
+            var rightsTask = POSAPP.Security.RightsManager.LoadAsync(user.RoleID, isOnline: token != null);
+            await PlaySuccessAnimationAsync(token == null ? "Offline mode — opening your till…" : null);
+            await rightsTask;
 
             new Dashboard().Show();
             this.Hide();
         }
 
         // ═════════════════════════════════════════════════════════════════════
+        // DOT ANIMATIONS (loading chase + error/warning shake)
+        // ═════════════════════════════════════════════════════════════════════
+        private void InvalidateDots()
+        {
+            foreach (var d in pinDots) d?.Invalidate();
+        }
+
+        private void StartLoadingDots()
+        {
+            _loadIdx = 0;
+            _loadTimer ??= new System.Windows.Forms.Timer { Interval = 110 };
+            _loadTimer.Tick -= LoadTimer_Tick;
+            _loadTimer.Tick += LoadTimer_Tick;
+            _loadTimer.Start();
+            InvalidateDots();
+        }
+
+        private void LoadTimer_Tick(object sender, EventArgs e)
+        {
+            _loadIdx = (_loadIdx + 1) % PIN_LENGTH;
+            InvalidateDots();
+        }
+
+        private void StopLoadingDots()
+        {
+            _loadTimer?.Stop();
+            _loadIdx = -1;
+            InvalidateDots();
+        }
+
+        private async Task ShakeDotsAsync(Color tint)
+        {
+            if (_shaking) return;
+            _shaking = true;
+
+            int baseX = _dotsBaseX ??= panelPinDots.Left;
+            _dotTint = tint;
+            InvalidateDots();
+
+            const int dur = 450;
+            var sw = Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < dur)
+            {
+                float t = sw.ElapsedMilliseconds / (float)dur;
+                panelPinDots.Left = baseX + (int)(Math.Sin(t * Math.PI * 6) * 14 * (1 - t));
+                await Task.Delay(15);
+            }
+            panelPinDots.Left = baseX;
+
+            await Task.Delay(150);          // let the colour linger briefly
+            _dotTint = null;
+            InvalidateDots();
+            _shaking = false;
+        }
+        private async Task ShowPinErrorAsync(string text, Color color)
+        {
+            lblPinError.Text = text;
+            lblPinError.Visible = true;
+
+            // Fade in by blending white -> colour (WinForms labels have no alpha)
+            const int dur = 250;
+            var sw = Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < dur)
+            {
+                float t = sw.ElapsedMilliseconds / (float)dur;
+                lblPinError.ForeColor = Color.FromArgb(
+                    255 + (int)((color.R - 255) * t),
+                    255 + (int)((color.G - 255) * t),
+                    255 + (int)((color.B - 255) * t));
+                await Task.Delay(15);
+            }
+            lblPinError.ForeColor = color;
+        }
+
+        private void HidePinError()
+        {
+            if (lblPinError != null) lblPinError.Visible = false;
+        }
+
+        // ═════════════════════════════════════════════════════════════════════
         // TITLE BAR
         // ═════════════════════════════════════════════════════════════════════
-        // Title bar buttons are Anchored Top|Right in the Designer, so they stay
-        // pinned to the corner automatically as panelTitleBar resizes — no manual
-        // repositioning needed here anymore.
         private void panelTitleBar_DoubleClick(object sender, EventArgs e)
             => btnMaximize_Click(sender, e);
 
@@ -471,18 +391,17 @@ namespace POSAPP
         protected override void OnResize(EventArgs e)
         {
             base.OnResize(e);
-            // Card centering and title-bar button positions are now handled
-            // declaratively (TableLayoutPanel + Anchor) — only the floating
-            // status toast still needs manual repositioning here.
-            if (_statusCard != null && _statusCard.Visible)
-                _statusCard.Location = new Point(
-                    this.ClientSize.Width - _statusCard.Width - 14, 50);
             this.Invalidate();
         }
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
             if (_updateInProgress) return true;
+
+            // While logging in / playing the success animation, ignore input
+            if (_busy)
+                return keyData == Keys.Escape ? base.ProcessCmdKey(ref msg, keyData) : true;
+
             if (keyData == Keys.Enter) { btnUnlock_Click(null, null); return true; }
             if (keyData == Keys.Escape) { this.Close(); return true; }
             if (keyData == Keys.Back)
@@ -508,27 +427,168 @@ namespace POSAPP
 
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
-            _dotTimer?.Stop();
-            _dotTimer?.Dispose();
+            _loadTimer?.Stop();
+            _loadTimer?.Dispose();
             base.OnFormClosed(e);
         }
 
         // ═════════════════════════════════════════════════════════════════════
-        // HELPERS
+        // LOGIN SUCCESS ANIMATION
         // ═════════════════════════════════════════════════════════════════════
-        private Region MakeRoundedRegion(Size size, int r)
-            => new Region(MakeRoundedPath(new Rectangle(0, 0, size.Width, size.Height), r));
-
-        private GraphicsPath MakeRoundedPath(Rectangle rect, int r)
+        private sealed class SuccessOverlay : Control
         {
-            int d = r * 2;
-            var path = new GraphicsPath();
-            path.AddArc(rect.X, rect.Y, d, d, 180, 90);
-            path.AddArc(rect.Right - d, rect.Y, d, d, 270, 90);
-            path.AddArc(rect.Right - d, rect.Bottom - d, d, d, 0, 90);
-            path.AddArc(rect.X, rect.Bottom - d, d, d, 90, 90);
-            path.CloseFigure();
-            return path;
+            public float Progress;                 // 0..1
+            public string Title = "Login successful";
+            public string Sub = "Opening your till…";
+
+            private readonly Font _titleFont = new Font("Segoe UI", 22F, FontStyle.Bold);
+            private readonly Font _subFont = new Font("Segoe UI", 11.5F);
+
+            public SuccessOverlay()
+            {
+                SetStyle(ControlStyles.AllPaintingInWmPaint |
+                         ControlStyles.UserPaint |
+                         ControlStyles.OptimizedDoubleBuffer |
+                         ControlStyles.ResizeRedraw, true);
+            }
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing) { _titleFont.Dispose(); _subFont.Dispose(); }
+                base.Dispose(disposing);
+            }
+
+            private static float Clamp01(float v) => v < 0 ? 0 : v > 1 ? 1 : v;
+            private static float EaseOut(float t) => 1 - (float)Math.Pow(1 - t, 3);
+            private static float EaseOutBack(float t)
+            {
+                const float c1 = 1.70158f, c3 = c1 + 1f;
+                return 1 + c3 * (float)Math.Pow(t - 1, 3) + c1 * (float)Math.Pow(t - 1, 2);
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                var g = e.Graphics;
+                if (Width <= 0 || Height <= 0) return;
+
+                // Same navy gradient as the login screen, covering the whole window
+                using (var bg = new LinearGradientBrush(ClientRectangle,
+                    Color.FromArgb(15, 23, 42), Color.FromArgb(30, 41, 70), 45f))
+                    g.FillRectangle(bg, ClientRectangle);
+
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                // AntiAlias (not ClearType) so semi-transparent text stays crisp while fading
+                g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+
+                float cx = Width / 2f, cy = Height / 2f - 50, r = 64;
+                var green = Color.FromArgb(34, 197, 94);
+
+                float pRing = EaseOut(Clamp01(Progress / 0.45f));
+                float pCheck = EaseOut(Clamp01((Progress - 0.40f) / 0.25f));
+                float pPop = Clamp01((Progress - 0.40f) / 0.30f);
+                float pPulse = Clamp01((Progress - 0.60f) / 0.40f);
+                float pText = EaseOut(Clamp01((Progress - 0.55f) / 0.30f));
+
+                // soft glow behind the circle
+                float glowR = r + 26;
+                using (var glow = new SolidBrush(Color.FromArgb((int)(28 * pRing), green)))
+                    g.FillEllipse(glow, cx - glowR, cy - glowR, glowR * 2, glowR * 2);
+
+                // inner fill (pops in slightly with the check)
+                float fr = r * (0.85f + 0.15f * EaseOutBack(pPop));
+                using (var fill = new SolidBrush(Color.FromArgb((int)(55 * pCheck), green)))
+                    g.FillEllipse(fill, cx - fr, cy - fr, fr * 2, fr * 2);
+
+                // faint track
+                using (var track = new Pen(Color.FromArgb(60, green), 6))
+                    g.DrawEllipse(track, cx - r, cy - r, r * 2, r * 2);
+
+                // sweeping ring
+                using (var ring = new Pen(green, 6) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+                    if (pRing > 0)
+                        g.DrawArc(ring, cx - r, cy - r, r * 2, r * 2, -90, 360 * pRing);
+
+                // checkmark drawn progressively
+                var a = new PointF(cx - 26, cy + 2);
+                var b = new PointF(cx - 8, cy + 20);
+                var c = new PointF(cx + 28, cy - 18);
+                float l1 = Dist(a, b), l2 = Dist(b, c);
+                float drawn = (l1 + l2) * pCheck;
+                using (var pen = new Pen(Color.White, 8)
+                { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
+                {
+                    if (drawn > 0)
+                    {
+                        if (drawn <= l1)
+                            g.DrawLine(pen, a, Lerp(a, b, drawn / l1));
+                        else
+                        {
+                            g.DrawLine(pen, a, b);
+                            g.DrawLine(pen, b, Lerp(b, c, (drawn - l1) / l2));
+                        }
+                    }
+                }
+
+                // expanding pulse ring
+                if (pPulse > 0 && pPulse < 1)
+                {
+                    float pr = r + 40 * EaseOut(pPulse);
+                    using (var pulse = new Pen(Color.FromArgb((int)(160 * (1 - pPulse)), green), 3))
+                        g.DrawEllipse(pulse, cx - pr, cy - pr, pr * 2, pr * 2);
+                }
+
+                // text (fades in and slides up a little). Rectangles are tall enough
+                // for the font so descenders ("g", "p") are never clipped.
+                float lift = (1 - pText) * 12;
+                using (var b1 = new SolidBrush(Color.FromArgb((int)(255 * pText), 255, 255, 255)))
+                using (var b2 = new SolidBrush(Color.FromArgb((int)(255 * pText), 148, 163, 184)))
+                using (var sf = new StringFormat
+                {
+                    Alignment = StringAlignment.Center,
+                    LineAlignment = StringAlignment.Near,
+                    FormatFlags = StringFormatFlags.NoWrap,
+                    Trimming = StringTrimming.None
+                })
+                {
+                    g.DrawString(Title, _titleFont, b1,
+                        new RectangleF(0, cy + r + 30 + lift, Width, 56), sf);
+                    g.DrawString(Sub, _subFont, b2,
+                        new RectangleF(0, cy + r + 86 + lift, Width, 32), sf);
+                }
+            }
+
+            private static float Dist(PointF p, PointF q)
+                => (float)Math.Sqrt((q.X - p.X) * (q.X - p.X) + (q.Y - p.Y) * (q.Y - p.Y));
+            private static PointF Lerp(PointF p, PointF q, float t)
+                => new PointF(p.X + (q.X - p.X) * t, p.Y + (q.Y - p.Y) * t);
+        }
+
+        private async Task PlaySuccessAnimationAsync(string sub = null, int durationMs = 1500)
+        {
+            // Not docked: a plain full-size control on top of everything,
+            // so it also covers the title bar and footer.
+            var overlay = new SuccessOverlay
+            {
+                Location = Point.Empty,
+                Size = this.ClientSize,
+                Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right
+            };
+            if (sub != null) overlay.Sub = sub;
+
+            this.Controls.Add(overlay);
+            overlay.BringToFront();
+
+            var sw = Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < durationMs)
+            {
+                overlay.Progress = sw.ElapsedMilliseconds / (float)durationMs;
+                overlay.Invalidate();
+                await Task.Delay(15);
+            }
+
+            overlay.Progress = 1f;
+            overlay.Invalidate();
+            await Task.Delay(250);      // brief hold so the finished state is readable
         }
 
         // ═════════════════════════════════════════════════════════════════════

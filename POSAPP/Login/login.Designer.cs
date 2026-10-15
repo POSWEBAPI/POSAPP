@@ -16,6 +16,7 @@ namespace POSAPP
         private Label lblLogoFallback;
         private Label lblBrandTagline;
         private Panel panelFooterBar;
+        private Label lblPinError;
 
         private Label lblWelcome;
         private Label lblSubtitle;
@@ -229,7 +230,20 @@ namespace POSAPP
                 panelPinDots.Controls.Add(dot);
                 pinDots[i] = dot;
             }
-            y += dotSize + 26;
+            // ── Inline error text (shown after the dots shake) ───────
+            lblPinError = new Label
+            {
+                Text = "",
+                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
+                ForeColor = Color.White,                 // starts invisible on the white card
+                BackColor = Color.White,
+                AutoSize = false,
+                Size = new Size(innerWidth, 20),
+                Location = new Point(padX, y + dotSize + 3),
+                TextAlign = ContentAlignment.MiddleCenter,
+                Visible = false
+            };
+            y += dotSize + 26;  
 
             // ── Keypad ────────────────────────────────────────────
             // ── Keypad ────────────────────────────────────────────
@@ -320,7 +334,7 @@ namespace POSAPP
             {
                 picLogo, lblLogoFallback, lblBrandTagline,
                 divider, lblWelcome, lblSubtitle,
-                panelPinDots, panelKeypad, btnUnlock, lblShiftInfo
+                panelPinDots, panelKeypad, btnUnlock, lblShiftInfo, lblPinError
             });
 
             // ── Footer (outside the card) ───────────────────────────
